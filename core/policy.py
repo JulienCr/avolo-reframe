@@ -65,6 +65,10 @@ class PolicyState:
     tracks: tuple[Track | None, Track | None] = (None, None)
     cells: tuple[Rect, Rect] | None = None
     pending_cells: tuple[Rect, Rect] | None = None
+    # Set on a split->single reset, consumed (and cleared) by the commit
+    # that follows -- possibly several dwelling frames later, hence a
+    # state field rather than a one-call parameter.
+    mode_cut_pending: bool = False
 
 
 def initial_state(p: PolicyParams) -> PolicyState:
@@ -201,8 +205,8 @@ def _enter_split(state: PolicyState, alive: list[Track], now_ms: float, p: Polic
     cells = _cell_rects(alive, p)
     target = union(list(cells))
     # A 1-rect-to-2-cell shape change has no natural interpolation, so entry
-    # cuts directly; every later move within split, and the exit back to
-    # single (handled by _step_single), do ease.
+    # cuts directly, and so does the eventual exit (mode_cut_pending); only
+    # a move within one mode ever eases.
     new_state = replace(
         state,
         current=target,
@@ -214,6 +218,7 @@ def _enter_split(state: PolicyState, alive: list[Track], now_ms: float, p: Polic
         split_exit_since_ms=None,
         cells=cells,
         pending_cells=None,
+        mode_cut_pending=False,
     )
     command = Command(target=target, frm=None, duration_ms=0.0, reason="split", mode="split", cells=cells, frm_cells=None)
     return new_state, command
@@ -289,14 +294,29 @@ def _split_hold(
 
 def _reset_to_single(state: PolicyState) -> PolicyState:
     return replace(
-        state, mode="single", split_enter_since_ms=None, split_exit_since_ms=None, cells=None, pending_cells=None
+        state,
+        mode="single",
+        split_enter_since_ms=None,
+        split_exit_since_ms=None,
+        cells=None,
+        pending_cells=None,
+        mode_cut_pending=True,
     )
 
 
 def _commit(
-    state: PolicyState, target: Rect, current: Rect, last_seen_ms: float | None, now_ms: float, reason: str, p: PolicyParams
+    state: PolicyState,
+    target: Rect,
+    current: Rect,
+    last_seen_ms: float | None,
+    now_ms: float,
+    reason: str,
+    p: PolicyParams,
 ) -> tuple[PolicyState, Command]:
-    if p.snap or p.ease_ms <= 0:
+    # A mode change has nothing to interpolate from (single <-> split changes
+    # rect count), so it always cuts regardless of ease_ms/snap. The flag may
+    # have been set frames ago -- dwell can hold off the commit that clears it.
+    if state.mode_cut_pending or p.snap or p.ease_ms <= 0:
         command = Command(target=target, frm=None, duration_ms=0.0, reason=reason)
         busy_until_ms = None
     else:
@@ -304,7 +324,13 @@ def _commit(
         busy_until_ms = now_ms + p.ease_ms
 
     committed = replace(
-        state, current=target, pending=None, pending_since_ms=None, last_seen_ms=last_seen_ms, busy_until_ms=busy_until_ms
+        state,
+        current=target,
+        pending=None,
+        pending_since_ms=None,
+        last_seen_ms=last_seen_ms,
+        busy_until_ms=busy_until_ms,
+        mode_cut_pending=False,
     )
     return committed, command
 

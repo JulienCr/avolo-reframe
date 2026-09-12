@@ -572,3 +572,31 @@ def test_crown_violation_forces_a_commit_inside_the_dead_zone():
     assert cmd is not None
     assert cmd.reason == "crown"
     assert cmd.target.y <= box.crown + 1e-9
+
+
+def test_mode_changes_always_cut():
+    # Exaggerated ease_ms: a cut can only happen deliberately, not by accident.
+    p = PolicyParams(ease_ms=5000.0)
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+
+    state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, enter_cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
+    assert enter_cmd is not None and state.mode == "split"
+    assert enter_cmd.duration_ms == 0.0
+    assert enter_cmd.frm is None and enter_cmd.frm_cells is None
+
+    # Lose box_b for long enough that its track dies and split exits.
+    t = p.split_enter_ms
+    exit_cmd = None
+    while t < p.split_enter_ms + p.track_hold_ms + p.dwell_ms + 2000.0:
+        t += 200.0
+        state, cmd = step(state, [box_a], t, p)
+        if cmd is not None and state.mode == "single":
+            exit_cmd = cmd
+            break
+
+    assert exit_cmd is not None
+    assert exit_cmd.duration_ms == 0.0
+    assert exit_cmd.frm is None and exit_cmd.frm_cells is None
