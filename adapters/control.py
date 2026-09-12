@@ -50,6 +50,8 @@ class ControlState:
         self.paused = False
         self.connected = True
         self.crop = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+        self.mode = "single"
+        self.cells: list[dict] | None = None
         self.boxes: list[dict] = []
         self.frame_jpeg: bytes | None = None
         self.features: dict | None = None
@@ -70,12 +72,16 @@ class ControlState:
         crop: dict,
         stage_ms: dict[str, float],
         emitted: bool,
+        mode: str = "single",
+        cells: list[dict] | None = None,
         features: dict | None = None,
     ) -> None:
         with self.lock:
             self.frame_jpeg = frame_jpeg
             self.boxes = boxes
             self.crop = crop
+            self.mode = mode
+            self.cells = cells
             self._iter_times.append(time.monotonic())
             self.detections.append(bool(boxes))
             for stage, ms in stage_ms.items():
@@ -140,6 +146,8 @@ class ControlState:
                 "iterations_per_s": rate,
                 "detection_rate": detection_rate,
                 "crop": self.crop,
+                "mode": self.mode,
+                "cells": self.cells,
                 "boxes": self.boxes,
                 "commands_emitted": self.commands_emitted,
                 "stats": stats,

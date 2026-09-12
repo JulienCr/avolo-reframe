@@ -27,11 +27,12 @@
 </style>
 
 <canvas id="canvas"></canvas>
-<div id="status">Serveur de détection injoignable — nouvelle tentative…</div>
+<div id="status"></div>
 
 <script>
   const params = new URLSearchParams(location.search);
-  const API_URL = params.get("api") || "/api/features";
+  const FEATURES_URL = params.get("api") || "/api/features";
+  const STATE_URL = "/api/state";
   const POLL_MS = 150;
 
   const canvas = document.getElementById("canvas");
@@ -48,6 +49,8 @@
     joint: "#4ade80",
     bone: "#22c55e",
     shoulder: "#ff3b30",
+    frame: "#60a5fa",
+    deadZone: "rgba(96, 165, 250, 0.18)",
   };
 
   const MINOR_REGIONS = ["nose", "medianLine", "faceContour", "leftEyebrow", "rightEyebrow"];
@@ -77,9 +80,11 @@
   // drawing them clutters the top-left corner with meaningless dots/lines.
   const JOINT_MIN_CONFIDENCE = 0.05;
 
+  let lastState = null;
   let lastFeatures = null;
+  let stateFailed = false;
+  let featuresOff = false;
   let fetching = false;
-  let failed = false;
 
   function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
@@ -91,6 +96,11 @@
 
   function toPx(x, y) {
     return [x * window.innerWidth, y * window.innerHeight];
+  }
+
+  function toRectPx(r) {
+    const [x, y] = toPx(r.x, r.y);
+    return [x, y, r.w * window.innerWidth, r.h * window.innerHeight];
   }
 
   function drawLabel(text, x, y) {
@@ -183,6 +193,49 @@
     }
   }
 
+  // Box centered on rect where _moved() would not yet commit a re-frame:
+  // +/- dead_zone * rect size, the same formula core.policy applies in px.
+  function drawDeadZone(rect, deadZone) {
+    if (!deadZone) return;
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + rect.h / 2;
+    const zone = { x: cx - rect.w * deadZone, y: cy - rect.h * deadZone, w: rect.w * deadZone * 2, h: rect.h * deadZone * 2 };
+    const [x, y, w, h] = toRectPx(zone);
+    ctx.fillStyle = COLORS.deadZone;
+    ctx.fillRect(x, y, w, h);
+  }
+
+  function drawFrameRect(rect, deadZone, label) {
+    drawDeadZone(rect, deadZone);
+    const [x, y, w, h] = toRectPx(rect);
+    ctx.strokeStyle = COLORS.frame;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 4]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+    if (label) drawLabel(label, x + 6, y + 18);
+  }
+
+  function drawModeLabel(mode, detectorName) {
+    const text = `mode ${mode} · détecteur ${detectorName}`;
+    ctx.font = "13px -apple-system, sans-serif";
+    const w = ctx.measureText(text).width + 8;
+    const x = window.innerWidth - w - 18;
+    drawLabel(text, x, 20);
+  }
+
+  function drawFraming(state) {
+    if (!state) return;
+    const deadZone = (state.params || {}).dead_zone || 0;
+    if (state.mode === "split" && state.cells) {
+      drawFrameRect(state.cells[0], deadZone, "Haut");
+      drawFrameRect(state.cells[1], deadZone, "Bas");
+    } else if (state.crop) {
+      drawFrameRect(state.crop, deadZone, null);
+    }
+    drawModeLabel(state.mode || "single", state.detector || "?");
+  }
+
   function drawLegend() {
     const items = [
       [COLORS.face, "Visage"],
@@ -190,6 +243,8 @@
       [COLORS.mouthOuter, "Bouche"],
       [COLORS.joint, "Corps"],
       [COLORS.shoulder, "Épaules"],
+      [COLORS.frame, "Cadrage"],
+      [COLORS.deadZone, "Zone morte"],
     ];
     const x0 = 12;
     let y = 20;
@@ -208,42 +263,63 @@
 
   function draw() {
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-    if (!lastFeatures) return;
-    for (const face of lastFeatures.faces || []) drawFace(face);
-    for (const body of lastFeatures.bodies || []) drawBody(body);
+    drawFraming(lastState);
+    for (const face of (lastFeatures || {}).faces || []) drawFace(face);
+    for (const body of (lastFeatures || {}).bodies || []) drawBody(body);
     drawLegend();
   }
 
-  function showStatus(text) {
-    failed = true;
-    statusEl.textContent = text;
+  function updateStatus() {
+    if (stateFailed) {
+      statusEl.textContent = "Serveur injoignable — nouvelle tentative…";
+    } else if (featuresOff) {
+      statusEl.textContent = "Traits désactivés — relancez la boucle avec --features";
+    } else {
+      statusEl.style.display = "none";
+      return;
+    }
     statusEl.style.display = "block";
+  }
+
+  // The essential endpoint: its failure is the real "server unreachable"
+  // case, distinct from --features simply being off (see pollFeatures).
+  async function pollState() {
+    try {
+      const res = await fetch(STATE_URL, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      lastState = await res.json();
+      stateFailed = false;
+    } catch {
+      stateFailed = true;
+    }
+  }
+
+  async function pollFeatures() {
+    try {
+      const res = await fetch(FEATURES_URL, { cache: "no-store" });
+      // A reachable server answering 503 means --features is off, not that
+      // the server is down: the framing layer must still draw normally.
+      if (res.status === 503) {
+        lastFeatures = null;
+        featuresOff = true;
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      lastFeatures = await res.json();
+      featuresOff = false;
+    } catch {
+      lastFeatures = null;
+      featuresOff = true;
+    }
   }
 
   async function pollOnce() {
     if (fetching) return;
     fetching = true;
-    try {
-      const res = await fetch(API_URL, { cache: "no-store" });
-      // A reachable server answering 503 is not an unreachable server: saying so
-      // sent someone hunting a network fault when --features was simply off.
-      if (res.status === 503) {
-        showStatus("Traits désactivés — relancez la boucle avec --features");
-        return;
-      }
-      if (!res.ok) {
-        showStatus(`Serveur en erreur (HTTP ${res.status})`);
-        return;
-      }
-      lastFeatures = await res.json();
-      failed = false;
-      statusEl.style.display = "none";
-      draw();
-    } catch {
-      showStatus("Serveur de détection injoignable — nouvelle tentative…");
-    } finally {
-      fetching = false;
-    }
+    await Promise.all([pollState(), pollFeatures()]);
+    updateStatus();
+    draw();
+    fetching = false;
   }
 
   window.addEventListener("resize", resizeCanvas);

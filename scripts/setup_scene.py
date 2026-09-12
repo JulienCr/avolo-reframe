@@ -32,7 +32,6 @@ from scripts.run import DEFAULT_CONFIG_PATH, DEFAULT_CONTROL_PORT, apply_config
 SETUP_SCENE_CONFIG_DESTS = {"url", "password", "control_port", "media_file", "camera"}
 
 BG_COLOR = 0xFF1E1E1E
-FRAME_COLOR = 0x4DFFFFFF
 OVERLAY_NAME = "RF Overlay"
 DEFAULT_MEDIA_FILE = "tests/fixtures/lab-avolo-58m22-70m00.mp4"
 POLL_TIMEOUT_S = 8.0
@@ -222,10 +221,10 @@ def wait_for_resolution(obs: ObsWs, item_id: int) -> tuple[int, int]:
 
 
 def enforce_z_order(
-    obs: ObsWs, bg: int, control: int, output: int, cell_top: int, cell_bottom: int, frame: int, overlay: int
+    obs: ObsWs, bg: int, control: int, output: int, cell_top: int, cell_bottom: int, overlay: int
 ) -> None:
     # Index 0 is the bottom of the render stack; higher indices draw on top.
-    for index, item_id in enumerate((bg, control, output, cell_top, cell_bottom, frame, overlay)):
+    for index, item_id in enumerate((bg, control, output, cell_top, cell_bottom, overlay)):
         obs.request(
             "SetSceneItemIndex",
             {"sceneName": SCENE_NAME, "sceneItemId": item_id, "sceneItemIndex": index},
@@ -247,7 +246,8 @@ def media_input_settings(path: str) -> dict:
 
 
 def create_overlay_source(obs: ObsWs, control_port: int) -> int:
-    """Transparent Browser Source polling /api/features; sits over the control view."""
+    """Transparent Browser Source polling /api/state and /api/features, drawing
+    detections and the current framing over the control view."""
     response = obs.request(
         "CreateInput",
         {
@@ -337,35 +337,20 @@ def build_scene(
     )["sceneItemId"]
     set_camera_view(obs, cell_bottom_item, OUTPUT_X, OUTPUT_Y + cell_h, OUTPUT_W, cell_h)
 
-    frame_item = create_color_source(obs, FRAME_NAME, FRAME_COLOR)
-    set_transform(
-        obs,
-        frame_item,
-        {
-            "positionX": CONTROL_X,
-            "positionY": CONTROL_Y,
-            "alignment": 5,
-            "boundsType": "OBS_BOUNDS_STRETCH",
-            "boundsAlignment": 0,
-            "boundsWidth": CONTROL_W,
-            "boundsHeight": CONTROL_H,
-        },
-    )
-
     overlay_item = create_overlay_source(obs, control_port)
 
-    enforce_z_order(obs, bg_item, control_item, output_item, cell_top_item, cell_bottom_item, frame_item, overlay_item)
+    enforce_z_order(obs, bg_item, control_item, output_item, cell_top_item, cell_bottom_item, overlay_item)
 
     source_w, source_h = wait_for_resolution(obs, control_item)
     print(f"Résolution négociée : {source_w}x{source_h}")
     print(
         f"Identifiants des scene items : fond={bg_item} contrôle={control_item} "
         f"sortie={output_item} cellule_haut={cell_top_item} cellule_bas={cell_bottom_item} "
-        f"cadre={frame_item} overlay={overlay_item}"
+        f"overlay={overlay_item}"
     )
     print(
-        "Overlay RF Overlay ajouté : tant que « scripts.run --features » ne tourne pas encore "
-        "sur ce port, il affiche « serveur injoignable » — normal, pas une panne."
+        "Overlay RF Overlay ajouté : la couche de cadrage s'affiche même sans --features ; "
+        "tant que le port n'est pas encore servi, il affiche « serveur injoignable »."
     )
 
 

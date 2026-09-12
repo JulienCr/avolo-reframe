@@ -19,17 +19,7 @@ from adapters.frames import FrameSource
 from adapters.obsws import ObsWs, ObsWsError
 from core.geometry import Rect, clamp_to_source, expand, fit_ratio, to_crop, union
 from core.policy import Command, PolicyParams, PolicyState, initial_state, step
-from scripts.layout import (
-    CAM_NAME,
-    CONTROL_W,
-    CONTROL_X,
-    CONTROL_Y,
-    FRAME_NAME,
-    OUTPUT_H,
-    OUTPUT_W,
-    RATIO,
-    SCENE_NAME,
-)
+from scripts.layout import CAM_NAME, CONTROL_W, OUTPUT_H, OUTPUT_W, RATIO, SCENE_NAME
 
 # Shared with setup_scene.py's --control-port default, so the loop and the
 # overlay Browser Source URL it bakes in can never drift apart.
@@ -37,6 +27,12 @@ DEFAULT_CONTROL_PORT = 4466
 # Median committed-reframe amplitude on a 1920 px frame, measured in
 # docs/poc-mac-webcam.md: the distance at which --ease-ms applies as-is.
 REFERENCE_DISTANCE_PX = 675.0
+# GetSceneItemList costs roughly 0.1ms, negligible next to a ~5ms frame grab:
+# cheap enough to poll this often, and frequent enough that a scene rebuild
+# is caught before many frames land on whatever now holds the old ids.
+SCENE_CHECK_INTERVAL_S = 2.0
+SCENE_RESOLUTION_TIMEOUT_S = 3.0
+SCENE_RESOLUTION_POLL_S = 0.1
 
 DEFAULT_CONFIG_PATH = Path("reframe.toml")
 # TOML has no null: password/log/media_file use "" for "not set", converted below.
@@ -233,8 +229,8 @@ def build_detector(name: str, upper_body: bool) -> Detector:
     return YoloDetector()
 
 
-def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int]:
-    """Return (control_id, output_id, cell_top_id, cell_bottom_id, frame_id).
+def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int]:
+    """Return (control_id, output_id, cell_top_id, cell_bottom_id).
 
     Distinguished by bounds only, never by creation order: boundsWidth
     separates control from the three OUTPUT_W items, boundsHeight then
@@ -243,12 +239,11 @@ def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int]:
     """
     items = obs.request("GetSceneItemList", {"sceneName": scene})["sceneItems"]
     cam_ids = [i["sceneItemId"] for i in items if i["sourceName"] == CAM_NAME]
-    frame_ids = [i["sceneItemId"] for i in items if i["sourceName"] == FRAME_NAME]
 
-    if len(cam_ids) != 4 or len(frame_ids) != 1:
+    if len(cam_ids) != 4:
         print(
-            f"Scène « {scene} » incomplète (attendu 4 items {CAM_NAME} et 1 {FRAME_NAME}, "
-            f"trouvé {len(cam_ids)} et {len(frame_ids)}). Lancez d'abord setup_scene --force."
+            f"Scène « {scene} » incomplète (attendu 4 items {CAM_NAME}, trouvé {len(cam_ids)}). "
+            "Lancez d'abord setup_scene --force."
         )
         sys.exit(1)
 
@@ -271,7 +266,7 @@ def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int]:
         sys.exit(1)
 
     cell_top_id, cell_bottom_id = sorted(cell_ids, key=lambda i: transforms[i]["positionY"])
-    return control_ids[0], output_ids[0], cell_top_id, cell_bottom_id, frame_ids[0]
+    return control_ids[0], output_ids[0], cell_top_id, cell_bottom_id
 
 
 def source_size(obs: ObsWs, scene: str, control_id: int) -> tuple[int, int]:
@@ -281,18 +276,38 @@ def source_size(obs: ObsWs, scene: str, control_id: int) -> tuple[int, int]:
     return transform["sourceWidth"], transform["sourceHeight"]
 
 
+def resolve_scene(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int, int]:
+    """(control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h).
+
+    A scene rebuilt moments ago may not have renegotiated a resolution yet:
+    poll briefly rather than handing back 0x0, which a caller later divides by.
+    """
+    control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, scene)
+    deadline = time.perf_counter() + SCENE_RESOLUTION_TIMEOUT_S
+    source_w, source_h = source_size(obs, scene, control_id)
+    while (not source_w or not source_h) and time.perf_counter() < deadline:
+        time.sleep(SCENE_RESOLUTION_POLL_S)
+        source_w, source_h = source_size(obs, scene, control_id)
+    if not source_w or not source_h:
+        print(f"Scène « {scene} » : résolution jamais renégociée après reconstruction. Relancez scripts.run.")
+        sys.exit(1)
+    return control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+
+
+def scene_items_match(obs: ObsWs, scene: str, ids: tuple[int, int, int, int]) -> bool:
+    """True when every cached id still names a CAM_NAME item in scene.
+
+    A rebuild can reuse the same numeric ids for a different source: this
+    checks sourceName, not just presence, which is what a stale id hides.
+    """
+    items = obs.request("GetSceneItemList", {"sceneName": scene})["sceneItems"]
+    names = {i["sceneItemId"]: i["sourceName"] for i in items}
+    return all(names.get(item_id) == CAM_NAME for item_id in ids)
+
+
 def crop_patch(rect: Rect, source_w: int, source_h: int) -> dict:
     left, top, right, bottom = to_crop(rect, source_w, source_h)
     return {"cropLeft": left, "cropTop": top, "cropRight": right, "cropBottom": bottom}
-
-
-def overlay_patch(rect: Rect, control_scale: float) -> dict:
-    return {
-        "positionX": CONTROL_X + rect.x * control_scale,
-        "positionY": CONTROL_Y + rect.y * control_scale,
-        "boundsWidth": rect.w * control_scale,
-        "boundsHeight": rect.h * control_scale,
-    }
 
 
 def enabled_patch(scene: str, item_id: int, enabled: bool) -> tuple[str, dict]:
@@ -308,42 +323,44 @@ def make_single_apply_fn(
     output_id: int,
     cell_top_id: int,
     cell_bottom_id: int,
-    frame_id: int,
     source_w: int,
     source_h: int,
-    control_scale: float,
 ) -> ApplyFn:
-    """One rect drives the output crop and the control overlay; cells stay hidden."""
+    """One rect drives the output crop; cells stay hidden."""
     def apply_fn(rects: tuple[Rect, ...]) -> list[tuple[str, dict]]:
         (rect,) = rects
         return [
             enabled_patch(scene, output_id, True),
             enabled_patch(scene, cell_top_id, False),
             enabled_patch(scene, cell_bottom_id, False),
-            enabled_patch(scene, frame_id, True),
             transform_patch(scene, output_id, crop_patch(rect, source_w, source_h)),
-            transform_patch(scene, frame_id, overlay_patch(rect, control_scale)),
         ]
     return apply_fn
 
 
 def make_split_apply_fn(
-    scene: str, output_id: int, cell_top_id: int, cell_bottom_id: int, frame_id: int, source_w: int, source_h: int
+    scene: str, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
 ) -> ApplyFn:
-    """Two rects drive the two cells; the single output and the overlay both hide."""
+    """Two rects drive the two cells; the single output hides."""
     def apply_fn(rects: tuple[Rect, ...]) -> list[tuple[str, dict]]:
         top, bottom = rects
         return [
             enabled_patch(scene, output_id, False),
             enabled_patch(scene, cell_top_id, True),
             enabled_patch(scene, cell_bottom_id, True),
-            # RF Cadre is one rect: it cannot show both cells at once, so it
-            # hides rather than draw a union that misrepresents the split.
-            enabled_patch(scene, frame_id, False),
             transform_patch(scene, cell_top_id, crop_patch(top, source_w, source_h)),
             transform_patch(scene, cell_bottom_id, crop_patch(bottom, source_w, source_h)),
         ]
     return apply_fn
+
+
+def build_apply_fns(
+    scene: str, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
+) -> tuple[ApplyFn, ApplyFn]:
+    return (
+        make_single_apply_fn(scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
+        make_split_apply_fn(scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
+    )
 
 
 def travel_distance(frm: Rect, to: Rect) -> float:
@@ -385,6 +402,13 @@ def rect_dict(r: Rect | None) -> dict | None:
     return None if r is None else {"x": r.x, "y": r.y, "w": r.w, "h": r.h}
 
 
+def cells_dict(cells: tuple[Rect, Rect] | None, source_w: int, source_h: int) -> list[dict] | None:
+    """Normalize a (top, bottom) cell pair to fractions of the source, for the API."""
+    if cells is None:
+        return None
+    return [{"x": r.x / source_w, "y": r.y / source_h, "w": r.w / source_w, "h": r.h / source_h} for r in cells]
+
+
 def state_dict(s: PolicyState) -> dict:
     return {
         "current": rect_dict(s.current),
@@ -392,6 +416,7 @@ def state_dict(s: PolicyState) -> dict:
         "pending_since_ms": s.pending_since_ms,
         "last_seen_ms": s.last_seen_ms,
         "busy_until_ms": s.busy_until_ms,
+        "mode": s.mode,
     }
 
 
@@ -440,12 +465,11 @@ def main() -> None:
     obs = ObsWs(url=args.url, password=args.password)
     try:
         obs.connect()
-        control_id, output_id, cell_top_id, cell_bottom_id, frame_id = find_scene_items(obs, args.scene)
+        control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, args.scene)
         source_w, source_h = source_size(obs, args.scene, control_id)
     except ObsWsError as exc:
         print(f"Scène « {args.scene} » introuvable ou invalide ({exc}). Lancez d'abord setup_scene.")
         sys.exit(1)
-    control_scale = CONTROL_W / source_w
 
     p = PolicyParams(
         source_w=source_w,
@@ -468,11 +492,8 @@ def main() -> None:
     )
     state = initial_state(p)
 
-    single_apply_fn = make_single_apply_fn(
-        args.scene, output_id, cell_top_id, cell_bottom_id, frame_id, source_w, source_h, control_scale
-    )
-    split_apply_fn = make_split_apply_fn(
-        args.scene, output_id, cell_top_id, cell_bottom_id, frame_id, source_w, source_h
+    single_apply_fn, split_apply_fn = build_apply_fns(
+        args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
     )
 
     animator = Animator(url=args.url, password=args.password)
@@ -511,10 +532,23 @@ def main() -> None:
     start = time.perf_counter()
     deadline = None if args.duration <= 0 else start + args.duration
     next_tick = start
+    next_scene_check = start + SCENE_CHECK_INTERVAL_S
 
     try:
         while deadline is None or time.perf_counter() < deadline:
             try:
+                if time.perf_counter() >= next_scene_check:
+                    ids = (control_id, output_id, cell_top_id, cell_bottom_id)
+                    if not scene_items_match(obs, args.scene, ids):
+                        print("Scène reconstruite pendant que la boucle tournait : ré-résolution des scene items.")
+                        control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h = resolve_scene(
+                            obs, args.scene
+                        )
+                        single_apply_fn, split_apply_fn = build_apply_fns(
+                            args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                        )
+                    next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
+
                 paused, action = False, None
                 if control is not None:
                     p, current_fps, upper_body_wanted, paused = control.get_controls()
@@ -581,6 +615,8 @@ def main() -> None:
                         },
                         stage_ms=stage_ms,
                         emitted=emitted,
+                        mode=state.mode,
+                        cells=cells_dict(state.cells, source_w, source_h),
                         features=features_payload,
                     )
 
@@ -603,7 +639,14 @@ def main() -> None:
                 if control is not None:
                     control.set_connected(False)
                 obs.ensure_connected()
-                control_id, output_id, cell_top_id, cell_bottom_id, frame_id = find_scene_items(obs, args.scene)
+                # Re-resolving ids alone is not enough: single/split_apply_fn
+                # close over the old ones by value and must be rebuilt too.
+                control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h = resolve_scene(
+                    obs, args.scene
+                )
+                single_apply_fn, split_apply_fn = build_apply_fns(
+                    args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                )
                 if control is not None:
                     control.set_connected(True)
 

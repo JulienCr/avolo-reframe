@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--detector", choices=("pose", "vision"), default="vision")
     parser.add_argument("--upper-body", action="store_true")
     parser.add_argument("--out", required=True)
+    parser.add_argument("--summary-json", default=None, help="Écrit aussi l'agrégat en JSON (voir tests/corpus/README.md).")
     parser.add_argument("--margin", type=float, default=defaults.margin)
     parser.add_argument("--min-crop-h", type=float, default=defaults.min_crop_h)
     parser.add_argument("--dead-zone", type=float, default=defaults.dead_zone)
@@ -225,6 +226,32 @@ def print_summary(
         print("Crâne coupé : n/a (détecteur sans estimation de crâne, ou aucun sujet exploitable).")
 
 
+def summary_dict(header: dict, n_frames: int, n_detections: int, moves: list[dict], degeneracy: dict, head: dict) -> dict:
+    """The core of what print_summary prints, as JSON. tests/corpus/README.md
+    documents how classement_du_centre and largeur_union_2corps_px (from
+    tests/corpus/tools/analyze_two_subjects.py against the trace) fold in.
+    """
+    n_multibody = degeneracy["n_multibody"]
+    result = {
+        "source": header,
+        "images": n_frames,
+        "taux_detection": round(n_detections / n_frames, 4) if n_frames else 0.0,
+        "commandes": len(moves),
+        "images_2_corps_ou_plus": n_multibody,
+        "part_2_corps": round(n_multibody / n_frames, 4) if n_frames else 0.0,
+        "degenerate": round(degeneracy["n_degenerate"] / n_detections, 4) if n_detections else 0.0,
+    }
+    if head["n_checked"]:
+        result["crane_coupe"] = {
+            "cellules_verifiees": head["n_checked"],
+            "taux_coupe": round(head["n_cut"] / head["n_checked"], 4),
+            "marge_mediane_px": round(percentile(head["margins"], 0.5), 1),
+            "marge_p10_px": round(percentile(head["margins"], 0.1), 1),
+            "crane_hors_source_exclu": head["n_unreachable"],
+        }
+    return result
+
+
 def main() -> None:
     args = parse_args()
     video = VideoFrames(args.clip, fps=args.fps, width=args.width, start_s=args.start, duration_s=args.duration)
@@ -319,6 +346,10 @@ def main() -> None:
                 head["n_cut"] += 1 if check["cut"] else 0
 
     print_summary(n_frames, n_detections, moves, detector.name, degeneracy, head)
+    if args.summary_json:
+        with open(args.summary_json, "w") as f:
+            json.dump(summary_dict(header, n_frames, n_detections, moves, degeneracy, head), f, indent=2)
+            f.write("\n")
 
 
 if __name__ == "__main__":
