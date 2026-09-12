@@ -9,6 +9,7 @@ Un PoC macOS qui tourne, et trois documents :
 - [`docs/adr/0001-avolo-reframe.md`](docs/adr/0001-avolo-reframe.md) — la décision d'architecture. À lire avant d'écrire quoi que ce soit.
 - [`docs/recadrage-live-references.md`](docs/recadrage-live-references.md) — le dossier de sources (API obs-websocket, état de l'écosystème, chiffres de détection).
 - [`docs/poc-mac-webcam.md`](docs/poc-mac-webcam.md) — **tout ce qui a été mesuré sur machine**. À lire avant d'affirmer un chiffre.
+- [`TODO.md`](TODO.md) — ce qui reste, et surtout ce qui est **tranché** : à lire avant de rouvrir un débat.
 - [`tests/corpus/`](tests/corpus/README.md) — le corpus de cas de contrôle : trace de référence, images de l'extrait, outils de mesure. À comparer après tout changement de politique.
 
 Le PoC est en **Python 3.12** (`uv`), avec Apple Vision comme détecteur. Ça ne tranche **pas** le langage du cœur en production, volontairement ouvert par l'ADR (C++ direct si la cible reste le direct seul, Rust en ABI C s'il doit aussi servir Node) : `core/` est en fonctions pures sur des `dataclass` de flottants, transposable. Ne pas choisir à la place de l'ADR — poser la question.

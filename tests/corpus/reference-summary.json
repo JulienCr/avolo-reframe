@@ -17,9 +17,17 @@
       "dwell_ms": 400.0,
       "ease_ms": 320.0,
       "snap": false,
-      "hold_ms": 1500.0
+      "hold_ms": 1500.0,
+      "split_enabled": true,
+      "split_min_gap": 0.15,
+      "split_enter_ms": 600.0,
+      "split_exit_ms": 3000.0,
+      "track_hold_ms": 6000.0,
+      "eye_line": 0.33,
+      "max_zoom": 1.5,
+      "zoom_dead_zone": 0.25
     },
-    "detector": "vision-upper",
+    "detector": "pose",
     "fps": 12.0,
     "decimation": 5.0,
     "width": 640,
@@ -27,19 +35,26 @@
     "duration_s": null
   },
   "images": 8376,
-  "taux_detection": 0.9953,
-  "commandes": 114,
-  "images_2_corps_ou_plus": 3778,
-  "part_2_corps": 0.4511,
+  "taux_detection": 0.9944,
+  "commandes": 355,
+  "images_2_corps_ou_plus": 3822,
+  "part_2_corps": 0.4563,
   "classement_du_centre": {
-    "between": 3761,
-    "on_subject": 4566,
-    "n/a": 39,
-    "overlap": 10
+    "between": 3415,
+    "on_subject": 4626,
+    "overlap": 288,
+    "n/a": 47
   },
   "largeur_union_2corps_px": {
-    "mediane": 1570.7,
-    "p90": 1636.4
+    "mediane": 1426.0,
+    "p90": 1597.0
   },
-  "degenerate": 0.8984
+  "degenerate": 0.8995,
+  "crane_coupe": {
+    "cellules_verifiees": 7598,
+    "taux_coupe": 0.0,
+    "marge_mediane_px": 78.7,
+    "marge_p10_px": 28.6,
+    "crane_hors_source_exclu": 978
+  }
 }

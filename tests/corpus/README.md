@@ -21,13 +21,24 @@ L'état de référence, à comparer après toute modification de la politique.
 Il porte l'empreinte de l'extrait, tous les paramètres et le détecteur utilisés —
 un résumé qui ne dit pas ce qui l'a produit ne vaut rien trois semaines plus tard.
 
-Chiffres au 12 septembre 2026 : 8 376 images, détection 99,5 %, 114 commandes,
-**45,1 % d'images à deux corps ou plus**, dont **3 761 cadrées entre les sujets**
-et 4 566 sur un sujet.
+Chiffres au 13 septembre 2026, **détecteur `pose`** (le précédent, `vision-upper`,
+ne fournit aucune estimation de crâne) : 8 376 images, détection 99,4 %,
+355 commandes, **45,6 % d'images à deux corps ou plus**, dont 3 415 cadrées
+entre les sujets et 4 626 sur un sujet.
+
+Nouveau : **`crane_coupe`**, la mesure qui aurait attrapé le défaut de coupe de
+tête du 12-13 septembre — sur le cadre **appliqué**, pas la cible calculée, qui
+peut en diverger pendant des dizaines d'images tant que la zone morte ne
+recommet pas. 7 598 cellules vérifiées, **0 % coupées**, marge médiane +79px,
+p10 +29px ; 978 cas exclus où le crâne estimé tombe lui-même hors de la source
+(seule exception acceptée, comptée à part, jamais dans le taux de coupe).
 
 ## `traces/`
 
-- `full-reference.jsonl` — rejeu complet de l'extrait, sha256 `a6db1d5b3a4b1e08`.
+- `full-reference.jsonl` — rejeu complet de l'extrait avec `vision-upper`
+  (sans crâne), sha256 `a6db1d5b3a4b1e08` ; gardé pour comparer le détecteur.
+- `full-reference-pose.jsonl` — même extrait, **détecteur `pose`**, sha256
+  `2b0520667503dcab` : c'est celui qui a produit `reference-summary.json`.
 - `zoom-before.jsonl` / `zoom-after.jsonl` — avant et après l'introduction de
   `zoom_dead_zone` : 153 commandes contre 149, soit **−2,6 % seulement**. Résultat
   négatif conservé exprès : il dit que le pumping mesuré sur cet extrait vient de
@@ -37,7 +48,7 @@ et 4 566 sur un sujet.
 
 ```bash
 uv run python -m scripts.corpus tests/fixtures/lab-avolo-58m22-70m00.mp4 \
-    --upper-body --fps 12 --out trace.jsonl
+    --detector pose --fps 12 --out trace.jsonl --summary-json summary.json
 ```
 
 75 s pour 698 s de vidéo, et **deux rejeux donnent une sortie identique au bit

@@ -435,6 +435,29 @@ GPU sont le rendu d'OBS, pas la détection.
 > (`powermetrics --samplers tasks`) avant de conclure, et vérifier que la machine
 > est au calme.
 
+## Ce qui déclenche réellement les recadrages
+
+Rejeu complet, détecteur pose, chaque commande comptée par motif et par mode :
+
+| Motif | Mode | Commandes | Part |
+|---|---|---|---|
+| **crâne** | split | **152** | **42,8 %** |
+| ordinaire | split | 102 | 28,7 % |
+| ordinaire | simple | 96 | 27,0 % |
+| crâne | simple | 5 | 1,4 % |
+| | | **355** | |
+
+**En mode split, 60 % des recadrages sont forcés par la contrainte de crâne** —
+152 sur 254. C'est donc une contrainte dure qui travaille en permanence, pas une
+géométrie devenue instable.
+
+La distinction a une conséquence pratique : baisser `zoom_dead_zone` ou
+`dead_zone` ne ferait pas baisser ce taux, puisque ces recadrages **traversent**
+la zone morte par construction. Ce qui l'abaisserait, c'est un cadre plus
+généreux au-dessus de la tête — `crown_margin` — au prix de plans plus larges.
+Le taux de recadrage est donc un **réglage de composition**, pas un réglage de
+stabilité, et le confondre avec le second conduirait à tourner le mauvais bouton.
+
 ## Le matériel de test
 
 `tests/fixtures/lab-avolo-58m22-70m00.mp4` — extrait d'une captation « Le Lab

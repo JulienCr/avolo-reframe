@@ -180,10 +180,36 @@ Ce que la doc ne disait pas, mesuré sur OBS 32.2.2 / obs-websocket 5.7.4
 
 **Autres pistes de transport**, non retenues mais notées :
 [obs-crop-control](https://github.com/rse/obs-crop-control) pilote des filtres
-Crop/Pad par websocket avec interpolation ; le
-[filtre Render Delay](https://obsproject.com/kb/render-delay-filter) d'OBS
-retarde une source de 500 ms par instance, empilable — de quoi offrir au
-lisseur une fenêtre d'avance sur la seule sortie verticale.
+Crop/Pad par websocket avec interpolation.
+
+### Le délai de rendu, vérifié le 13 septembre 2026
+
+Le [filtre Render Delay](https://obsproject.com/kb/render-delay-filter) est
+**pilotable par websocket** : `filterKind` **`gpu_delay`**, créé par
+`CreateSourceFilter` et modifié par `SetSourceFilterSettings` sur la clé
+`delay_ms` — testé de 500 à 250 ms puis retiré. `async_delay_filter` existe
+aussi, pour les sources asynchrones.
+
+**Ce qu'un délai `D` sur la seule sortie verticale achète** : `D` millisecondes
+de **regard vers l'avant**. Le détecteur tourne sur le flux live, la politique
+décide à `t`, le spectateur voit `t − D` — donc une décision demandant jusqu'à
+`D` ms de confirmation s'applique sur **l'image exacte** où le changement s'est
+produit, sans flottement. C'est la version bornée du tampon d'AutoFlip décrit en
+§4 : on ne tamponne pas un plan entier en direct, on en tamponne 500 ms.
+
+**Ce que ça n'achète pas** : le maintien de piste. Un sujet qui sort du champ est
+gardé `track_hold_ms` (6 s par défaut, calé sur les 4 850 ms de décrochage
+mesurés), et on ne retarde pas un direct de six secondes. Le délai couvre le
+temps de confirmation, pas le maintien — les deux correctifs sont complémentaires
+et le délai est le plus petit des deux.
+
+**Le piège** : `gpu_delay` retarde la **vidéo seule**. Si la sortie verticale
+porte du son, ça donne 500 ms de désynchronisation labiale, bien plus visible que
+le flottement supprimé. Décaler l'audio d'autant, ou utiliser le délai de sortie
+du flux, qui porte les deux.
+
+Coût nul en pratique : TikTok et Instagram tamponnent déjà plusieurs secondes, et
+les deux sorties n'ont pas à être synchrones entre elles.
 
 ---
 
