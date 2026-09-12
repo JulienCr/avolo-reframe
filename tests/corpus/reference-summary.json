@@ -1,0 +1,45 @@
+{
+  "source": {
+    "clip_sha256_16": "b172c72d8b9c9e33",
+    "probe": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0,
+      "duration_s": 698.0
+    },
+    "params": {
+      "source_w": 1920,
+      "source_h": 1080,
+      "ratio": 0.5625,
+      "margin": 0.18,
+      "min_crop_h": 960.0,
+      "dead_zone": 0.12,
+      "dwell_ms": 400.0,
+      "ease_ms": 320.0,
+      "snap": false,
+      "hold_ms": 1500.0
+    },
+    "detector": "vision-upper",
+    "fps": 12.0,
+    "decimation": 5.0,
+    "width": 640,
+    "start_s": null,
+    "duration_s": null
+  },
+  "images": 8376,
+  "taux_detection": 0.9953,
+  "commandes": 114,
+  "images_2_corps_ou_plus": 3778,
+  "part_2_corps": 0.4511,
+  "classement_du_centre": {
+    "between": 3761,
+    "on_subject": 4566,
+    "n/a": 39,
+    "overlap": 10
+  },
+  "largeur_union_2corps_px": {
+    "mediane": 1570.7,
+    "p90": 1636.4
+  },
+  "degenerate": 0.8984
+}
