@@ -1,0 +1,253 @@
+<title>AVOLO Reframe Overlay</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+  }
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+  }
+  #status {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    font: 13px/1.4 -apple-system, sans-serif;
+    color: #fff;
+    background: rgba(20, 20, 20, 0.72);
+    padding: 6px 10px;
+    border-radius: 6px;
+    display: none;
+  }
+</style>
+
+<canvas id="canvas"></canvas>
+<div id="status">Serveur de détection injoignable — nouvelle tentative…</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const API_URL = params.get("api") || "/api/features";
+  const POLL_MS = 150;
+
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const statusEl = document.getElementById("status");
+
+  const COLORS = {
+    face: "#22d3ee",
+    eyes: "#facc15",
+    pupils: "#ef4444",
+    mouthOuter: "#f472b6",
+    mouthInner: "#fb923c",
+    minor: "#9ca3af",
+    joint: "#4ade80",
+    bone: "#22c55e",
+    shoulder: "#ff3b30",
+  };
+
+  const MINOR_REGIONS = ["nose", "medianLine", "faceContour", "leftEyebrow", "rightEyebrow"];
+
+  const SKELETON = [
+    ["head", "neck_1"],
+    ["neck_1", "left_shoulder_1"],
+    ["neck_1", "right_shoulder_1"],
+    ["left_shoulder_1", "left_forearm"],
+    ["left_forearm", "left_hand"],
+    ["right_shoulder_1", "right_forearm"],
+    ["right_forearm", "right_hand"],
+    ["neck_1", "root"],
+    ["root", "left_upLeg"],
+    ["left_upLeg", "left_leg"],
+    ["left_leg", "left_foot"],
+    ["root", "right_upLeg"],
+    ["right_upLeg", "right_leg"],
+    ["right_leg", "right_foot"],
+    ["head", "left_eye"],
+    ["head", "right_eye"],
+    ["head", "left_ear"],
+    ["head", "right_ear"],
+  ];
+
+  // Joints below this confidence are Vision's "not found" sentinel (0,0);
+  // drawing them clutters the top-left corner with meaningless dots/lines.
+  const JOINT_MIN_CONFIDENCE = 0.05;
+
+  let lastFeatures = null;
+  let fetching = false;
+  let failed = false;
+
+  function resizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = window.innerWidth * dpr;
+    canvas.height = window.innerHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function toPx(x, y) {
+    return [x * window.innerWidth, y * window.innerHeight];
+  }
+
+  function drawLabel(text, x, y) {
+    ctx.font = "13px -apple-system, sans-serif";
+    const padding = 4;
+    const w = ctx.measureText(text).width + padding * 2;
+    ctx.fillStyle = "rgba(15, 15, 15, 0.6)";
+    ctx.fillRect(x, y - 14, w, 18);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(text, x + padding, y);
+  }
+
+  function strokePath(points, color, width, close) {
+    if (points.length < 2) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    points.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+    if (close) ctx.closePath();
+    ctx.stroke();
+  }
+
+  function drawDots(points, color, radius) {
+    ctx.fillStyle = color;
+    for (const [x, y] of points) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  function regionPoints(region) {
+    return (region || []).map(([x, y]) => toPx(x, y));
+  }
+
+  function drawFace(face) {
+    const [x, y] = toPx(face.box[0], face.box[1]);
+    const [w, h] = [face.box[2] * window.innerWidth, face.box[3] * window.innerHeight];
+    ctx.strokeStyle = COLORS.face;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+
+    const fmt = (v) => (v === null ? "?" : Math.round(v) + "°");
+    drawLabel(`lacet ${fmt(face.yaw_deg)} · tangage ${fmt(face.pitch_deg)} · roulis ${fmt(face.roll_deg)}`, x, y - 6);
+
+    const regions = face.regions || {};
+    drawDots(regionPoints(regions.leftEye), COLORS.eyes, 2.5);
+    drawDots(regionPoints(regions.rightEye), COLORS.eyes, 2.5);
+    drawDots(regionPoints(regions.leftPupil), COLORS.pupils, 3.5);
+    drawDots(regionPoints(regions.rightPupil), COLORS.pupils, 3.5);
+    strokePath(regionPoints(regions.outerLips), COLORS.mouthOuter, 2, true);
+    strokePath(regionPoints(regions.innerLips), COLORS.mouthInner, 1.5, true);
+    for (const name of MINOR_REGIONS) {
+      drawDots(regionPoints(regions[name]), COLORS.minor, 1.5);
+    }
+  }
+
+  function drawBody(body) {
+    const joints = body.joints || {};
+    const confident = (name) => {
+      const j = joints[name];
+      return j && j[2] >= JOINT_MIN_CONFIDENCE ? j : null;
+    };
+
+    for (const [a, b] of SKELETON) {
+      const ja = confident(a);
+      const jb = confident(b);
+      if (!ja || !jb) continue;
+      strokePath([toPx(ja[0], ja[1]), toPx(jb[0], jb[1])], COLORS.bone, 2, false);
+    }
+
+    for (const joint of Object.values(joints)) {
+      const [x, y, conf] = joint;
+      if (conf < JOINT_MIN_CONFIDENCE) continue;
+      const [px, py] = toPx(x, y);
+      ctx.globalAlpha = 0.25 + conf * 0.75;
+      drawDots([[px, py]], COLORS.joint, 2 + conf * 3);
+      ctx.globalAlpha = 1;
+    }
+
+    const left = confident("left_shoulder_1");
+    const right = confident("right_shoulder_1");
+    if (left && right && body.shoulder_angle_deg !== null) {
+      const p1 = toPx(left[0], left[1]);
+      const p2 = toPx(right[0], right[1]);
+      strokePath([p1, p2], COLORS.shoulder, 4, false);
+      const midX = (p1[0] + p2[0]) / 2;
+      const midY = (p1[1] + p2[1]) / 2;
+      drawLabel(`épaules ${Math.round(body.shoulder_angle_deg)}°`, midX, midY - 10);
+    }
+  }
+
+  function drawLegend() {
+    const items = [
+      [COLORS.face, "Visage"],
+      [COLORS.eyes, "Yeux / pupilles"],
+      [COLORS.mouthOuter, "Bouche"],
+      [COLORS.joint, "Corps"],
+      [COLORS.shoulder, "Épaules"],
+    ];
+    const x0 = 12;
+    let y = 20;
+    ctx.font = "12px -apple-system, sans-serif";
+    const width = 130;
+    ctx.fillStyle = "rgba(15, 15, 15, 0.55)";
+    ctx.fillRect(x0 - 6, y - 14, width, items.length * 18 + 6);
+    for (const [color, label] of items) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x0, y - 8, 10, 10);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(label, x0 + 16, y);
+      y += 18;
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    if (!lastFeatures) return;
+    for (const face of lastFeatures.faces || []) drawFace(face);
+    for (const body of lastFeatures.bodies || []) drawBody(body);
+    drawLegend();
+  }
+
+  function showStatus(text) {
+    failed = true;
+    statusEl.textContent = text;
+    statusEl.style.display = "block";
+  }
+
+  async function pollOnce() {
+    if (fetching) return;
+    fetching = true;
+    try {
+      const res = await fetch(API_URL, { cache: "no-store" });
+      // A reachable server answering 503 is not an unreachable server: saying so
+      // sent someone hunting a network fault when --features was simply off.
+      if (res.status === 503) {
+        showStatus("Traits désactivés — relancez la boucle avec --features");
+        return;
+      }
+      if (!res.ok) {
+        showStatus(`Serveur en erreur (HTTP ${res.status})`);
+        return;
+      }
+      lastFeatures = await res.json();
+      failed = false;
+      statusEl.style.display = "none";
+      draw();
+    } catch {
+      showStatus("Serveur de détection injoignable — nouvelle tentative…");
+    } finally {
+      fetching = false;
+    }
+  }
+
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+  pollOnce();
+  setInterval(pollOnce, POLL_MS);
+</script>

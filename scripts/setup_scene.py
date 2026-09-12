@@ -1,0 +1,399 @@
+"""Builds the AVOLO Reframe POC scene in OBS: background, dual camera views, crop overlay.
+
+Run as: uv run python -m scripts.setup_scene
+"""
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+from adapters.obsws import ObsWs, ObsWsError
+from scripts.layout import (
+    BG_NAME,
+    CAM_KIND,
+    CAM_NAME,
+    CANVAS_H,
+    CANVAS_W,
+    CONTROL_H,
+    CONTROL_W,
+    CONTROL_X,
+    CONTROL_Y,
+    FRAME_NAME,
+    MEDIA_KIND,
+    OUTPUT_H,
+    OUTPUT_W,
+    OUTPUT_X,
+    OUTPUT_Y,
+    SCENE_NAME,
+)
+from scripts.run import DEFAULT_CONFIG_PATH, DEFAULT_CONTROL_PORT, apply_config
+
+SETUP_SCENE_CONFIG_DESTS = {"url", "password", "control_port", "media_file", "camera"}
+
+BG_COLOR = 0xFF1E1E1E
+FRAME_COLOR = 0x4DFFFFFF
+OVERLAY_NAME = "RF Overlay"
+DEFAULT_MEDIA_FILE = "tests/fixtures/lab-avolo-58m22-70m00.mp4"
+POLL_TIMEOUT_S = 8.0
+POLL_INTERVAL_S = 0.25
+
+
+def parse_args() -> argparse.Namespace:
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=Path, default=None)
+    pre_args, _ = pre.parse_known_args()
+
+    parser = argparse.ArgumentParser(description="Construit la scène AVOLO Reframe POC dans OBS.")
+    parser.add_argument(
+        "--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Fichier de config TOML (silencieux si absent)."
+    )
+    parser.add_argument("--url", default="ws://127.0.0.1:4455")
+    parser.add_argument("--password", default=None)
+    parser.add_argument("--force", action="store_true", help="Détruit et reconstruit la scène existante.")
+    parser.add_argument("--device", default=None, help="Sous-chaîne (insensible à la casse) du nom de la caméra.")
+    parser.add_argument("--allow-center-stage", action="store_true")
+    parser.add_argument(
+        "--media-file",
+        default=None,
+        help=f"Fichier vidéo à boucler (défaut : {DEFAULT_MEDIA_FILE}).",
+    )
+    parser.add_argument(
+        "--camera",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Utilise une caméra au lieu du fichier vidéo par défaut.",
+    )
+    parser.add_argument(
+        "--control-port",
+        type=int,
+        default=DEFAULT_CONTROL_PORT,
+        help="Port du serveur de contrôle, pour l'URL de l'overlay RF Overlay (doit correspondre à scripts.run).",
+    )
+
+    config_path = pre_args.config or DEFAULT_CONFIG_PATH
+    status = apply_config(parser, config_path, explicit=pre_args.config is not None, dests=SETUP_SCENE_CONFIG_DESTS)
+    args = parser.parse_args()
+    print(status)
+
+    wants_camera = args.camera or args.device or args.allow_center_stage
+    if args.media_file and wants_camera:
+        print("--media-file est incompatible avec --camera, --device et --allow-center-stage.")
+        sys.exit(1)
+
+    # The fixture is the default source: a camera makes every replay different,
+    # so measurements taken against one are not comparable between runs.
+    if not wants_camera and not args.media_file:
+        fixture = Path(DEFAULT_MEDIA_FILE)
+        if fixture.is_file():
+            args.media_file = str(fixture)
+        else:
+            print(f"Fichier par défaut « {DEFAULT_MEDIA_FILE} » absent : bascule sur la caméra.")
+
+    return args
+
+
+def normalize(name: str) -> str:
+    """Strip non-breaking spaces so French device names match cleanly."""
+    return name.replace("\xa0", " ")
+
+
+def scene_exists(obs: ObsWs) -> bool:
+    scenes = obs.request("GetSceneList")["scenes"]
+    return any(s["sceneName"] == SCENE_NAME for s in scenes)
+
+
+def teardown_existing_scene(obs: ObsWs) -> None:
+    obs.request("RemoveScene", {"sceneName": SCENE_NAME})
+    existing_inputs = {i["inputName"] for i in obs.request("GetInputList")["inputs"]}
+    for name in (FRAME_NAME, CAM_NAME, BG_NAME, OVERLAY_NAME):
+        if name in existing_inputs:
+            obs.request("RemoveInput", {"inputName": name})
+
+
+def create_color_source(obs: ObsWs, name: str, color: int) -> int:
+    response = obs.request(
+        "CreateInput",
+        {
+            "sceneName": SCENE_NAME,
+            "inputName": name,
+            "inputKind": "color_source_v3",
+            "inputSettings": {"color": color, "width": CANVAS_W, "height": CANVAS_H},
+            "sceneItemEnabled": True,
+        },
+    )
+    return response["sceneItemId"]
+
+
+def set_transform(obs: ObsWs, item_id: int, patch: dict) -> None:
+    obs.request(
+        "SetSceneItemTransform",
+        {"sceneName": SCENE_NAME, "sceneItemId": item_id, "sceneItemTransform": patch},
+    )
+
+
+def set_camera_view(obs: ObsWs, item_id: int, x: float, y: float, w: float, h: float) -> None:
+    set_transform(
+        obs,
+        item_id,
+        {
+            "positionX": x,
+            "positionY": y,
+            "alignment": 5,
+            "boundsType": "OBS_BOUNDS_SCALE_INNER",
+            "boundsAlignment": 0,
+            "boundsWidth": w,
+            "boundsHeight": h,
+        },
+    )
+
+
+def pick_device(obs: ObsWs, substring: str | None) -> dict:
+    items = obs.request(
+        "GetInputPropertiesListPropertyItems",
+        {"inputName": CAM_NAME, "propertyName": "device"},
+    )["propertyItems"]
+
+    if substring:
+        needle = substring.lower()
+        matches = [i for i in items if needle in normalize(i["itemName"]).lower()]
+        if not matches:
+            print(f"Aucune caméra ne correspond à « {substring} ».")
+            sys.exit(1)
+        return matches[0]
+
+    # Default: a Continuity iPhone camera (never its Desk View companion),
+    # else the first real camera, never the virtual one we would feed back.
+    for item in items:
+        name = normalize(item["itemName"]).lower()
+        if "iphone" in name and "desk view" not in name:
+            return item
+    for item in items:
+        name = normalize(item["itemName"]).lower()
+        if "virtual camera" not in name:
+            return item
+
+    print("Aucune caméra réelle disponible sur cette machine.")
+    sys.exit(1)
+
+
+def check_center_stage(device_uuid: str, allow: bool) -> None:
+    try:
+        import AVFoundation as AV
+
+        session = AV.AVCaptureDeviceDiscoverySession.discoverySessionWithDeviceTypes_mediaType_position_(
+            [
+                "AVCaptureDeviceTypeBuiltInWideAngleCamera",
+                "AVCaptureDeviceTypeExternal",
+                "AVCaptureDeviceTypeContinuityCamera",
+            ],
+            AV.AVMediaTypeVideo,
+            0,
+        )
+        active = any(
+            str(d.uniqueID()) == device_uuid and d.isCenterStageActive() for d in session.devices()
+        )
+    except Exception as exc:
+        print(f"Avertissement : vérification Center Stage impossible ({exc}).")
+        return
+
+    if active and not allow:
+        print("Center Stage est actif sur cette caméra : les mesures seraient faussées.")
+        print("Désactivez-le, ou relancez avec --allow-center-stage pour poursuivre quand même.")
+        sys.exit(1)
+    if active:
+        print("Attention : Center Stage est actif ; poursuite forcée via --allow-center-stage.")
+    else:
+        print("Center Stage : inactif.")
+
+
+def wait_for_resolution(obs: ObsWs, item_id: int) -> tuple[int, int]:
+    deadline = time.monotonic() + POLL_TIMEOUT_S
+    while time.monotonic() < deadline:
+        transform = obs.request(
+            "GetSceneItemTransform", {"sceneName": SCENE_NAME, "sceneItemId": item_id}
+        )["sceneItemTransform"]
+        w, h = transform["sourceWidth"], transform["sourceHeight"]
+        if w and h:
+            return w, h
+        time.sleep(POLL_INTERVAL_S)
+    print("La source n'a jamais négocié de format (0x0 après 8s).")
+    sys.exit(1)
+
+
+def enforce_z_order(
+    obs: ObsWs, bg: int, control: int, output: int, cell_top: int, cell_bottom: int, frame: int, overlay: int
+) -> None:
+    # Index 0 is the bottom of the render stack; higher indices draw on top.
+    for index, item_id in enumerate((bg, control, output, cell_top, cell_bottom, frame, overlay)):
+        obs.request(
+            "SetSceneItemIndex",
+            {"sceneName": SCENE_NAME, "sceneItemId": item_id, "sceneItemIndex": index},
+        )
+
+
+def media_input_settings(path: str) -> dict:
+    return {
+        "local_file": path,
+        "is_local_file": True,
+        "looping": True,
+        # close_when_inactive/restart_on_activate off keep the file decoding continuously,
+        # like a camera, instead of rewinding on every scene switch (restart_on_activate
+        # would corrupt the scene-switch behaviour the POC exists to test).
+        "close_when_inactive": False,
+        "restart_on_activate": False,
+        "hw_decode": True,
+    }
+
+
+def create_overlay_source(obs: ObsWs, control_port: int) -> int:
+    """Transparent Browser Source polling /api/features; sits over the control view."""
+    response = obs.request(
+        "CreateInput",
+        {
+            "sceneName": SCENE_NAME,
+            "inputName": OVERLAY_NAME,
+            "inputKind": "browser_source",
+            "inputSettings": {
+                "url": f"http://127.0.0.1:{control_port}/overlay.html",
+                "width": CONTROL_W,
+                "height": CONTROL_H,
+                "shutdown": False,
+                "restart_when_active": False,
+            },
+            "sceneItemEnabled": True,
+        },
+    )
+    item_id = response["sceneItemId"]
+    set_transform(
+        obs,
+        item_id,
+        {
+            "positionX": CONTROL_X,
+            "positionY": CONTROL_Y,
+            "alignment": 5,
+            "boundsType": "OBS_BOUNDS_STRETCH",
+            "boundsAlignment": 0,
+            "boundsWidth": CONTROL_W,
+            "boundsHeight": CONTROL_H,
+        },
+    )
+    return item_id
+
+
+def build_scene(
+    obs: ObsWs,
+    device: str | None,
+    allow_center_stage: bool,
+    media_file: str | None = None,
+    control_port: int = DEFAULT_CONTROL_PORT,
+) -> None:
+    obs.request("CreateScene", {"sceneName": SCENE_NAME})
+
+    bg_item = create_color_source(obs, BG_NAME, BG_COLOR)
+    set_transform(obs, bg_item, {"positionX": 0, "positionY": 0, "alignment": 5})
+
+    if media_file:
+        cam_kind, cam_settings = MEDIA_KIND, media_input_settings(media_file)
+    else:
+        cam_kind, cam_settings = CAM_KIND, {}
+
+    cam_response = obs.request(
+        "CreateInput",
+        {
+            "sceneName": SCENE_NAME,
+            "inputName": CAM_NAME,
+            "inputKind": cam_kind,
+            "inputSettings": cam_settings,
+            "sceneItemEnabled": True,
+        },
+    )
+    control_item = cam_response["sceneItemId"]
+
+    if media_file:
+        print(f"Source choisie : fichier vidéo en boucle ({media_file})")
+    else:
+        chosen = pick_device(obs, device)
+        obs.request("SetInputSettings", {"inputName": CAM_NAME, "inputSettings": {"device": chosen["itemValue"]}})
+        print(f"Caméra choisie : {normalize(chosen['itemName'])} ({chosen['itemValue']})")
+        check_center_stage(chosen["itemValue"], allow_center_stage)
+
+    set_camera_view(obs, control_item, CONTROL_X, CONTROL_Y, CONTROL_W, CONTROL_H)
+
+    output_item = obs.request(
+        "CreateSceneItem", {"sceneName": SCENE_NAME, "sourceName": CAM_NAME, "sceneItemEnabled": True}
+    )["sceneItemId"]
+    set_camera_view(obs, output_item, OUTPUT_X, OUTPUT_Y, OUTPUT_W, OUTPUT_H)
+
+    # Split mode's two stacked cells: same input, two more views, hidden
+    # until split mode shows them — single mode is the starting state.
+    cell_h = OUTPUT_H // 2
+    cell_top_item = obs.request(
+        "CreateSceneItem", {"sceneName": SCENE_NAME, "sourceName": CAM_NAME, "sceneItemEnabled": False}
+    )["sceneItemId"]
+    set_camera_view(obs, cell_top_item, OUTPUT_X, OUTPUT_Y, OUTPUT_W, cell_h)
+    cell_bottom_item = obs.request(
+        "CreateSceneItem", {"sceneName": SCENE_NAME, "sourceName": CAM_NAME, "sceneItemEnabled": False}
+    )["sceneItemId"]
+    set_camera_view(obs, cell_bottom_item, OUTPUT_X, OUTPUT_Y + cell_h, OUTPUT_W, cell_h)
+
+    frame_item = create_color_source(obs, FRAME_NAME, FRAME_COLOR)
+    set_transform(
+        obs,
+        frame_item,
+        {
+            "positionX": CONTROL_X,
+            "positionY": CONTROL_Y,
+            "alignment": 5,
+            "boundsType": "OBS_BOUNDS_STRETCH",
+            "boundsAlignment": 0,
+            "boundsWidth": CONTROL_W,
+            "boundsHeight": CONTROL_H,
+        },
+    )
+
+    overlay_item = create_overlay_source(obs, control_port)
+
+    enforce_z_order(obs, bg_item, control_item, output_item, cell_top_item, cell_bottom_item, frame_item, overlay_item)
+
+    source_w, source_h = wait_for_resolution(obs, control_item)
+    print(f"Résolution négociée : {source_w}x{source_h}")
+    print(
+        f"Identifiants des scene items : fond={bg_item} contrôle={control_item} "
+        f"sortie={output_item} cellule_haut={cell_top_item} cellule_bas={cell_bottom_item} "
+        f"cadre={frame_item} overlay={overlay_item}"
+    )
+    print(
+        "Overlay RF Overlay ajouté : tant que « scripts.run --features » ne tourne pas encore "
+        "sur ce port, il affiche « serveur injoignable » — normal, pas une panne."
+    )
+
+
+def main() -> None:
+    args = parse_args()
+
+    media_file = None
+    if args.media_file:
+        # ffmpeg_source renders black on a relative local_file with no error —
+        # always resolve to an absolute path before it reaches OBS.
+        media_path = Path(args.media_file).resolve()
+        if not media_path.is_file():
+            print(f"Le fichier vidéo « {media_path} » n'existe pas.")
+            sys.exit(1)
+        media_file = str(media_path)
+
+    try:
+        with ObsWs(url=args.url, password=args.password) as obs:
+            if scene_exists(obs):
+                if not args.force:
+                    print(f"La scène « {SCENE_NAME} » existe déjà. Relancez avec --force pour la reconstruire.")
+                    sys.exit(1)
+                teardown_existing_scene(obs)
+            build_scene(obs, args.device, args.allow_center_stage, media_file, args.control_port)
+    except ObsWsError as exc:
+        print(f"Erreur OBS : {exc}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

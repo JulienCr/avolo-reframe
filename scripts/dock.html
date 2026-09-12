@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>AVOLO Reframe — Contrôle</title>
+<style>
+* { box-sizing: border-box; }
+html, body {
+    margin: 0; padding: 0;
+    background: #1e1e1e; color: #ddd;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px;
+    user-select: none;
+}
+.panel { padding: 8px; display: flex; flex-direction: column; gap: 8px; max-width: 560px; margin: 0 auto; }
+#status { font-size: 11px; padding: 4px 6px; border-radius: 3px; background: #2a2a2a; text-align: center; }
+#status.ok   { background: #1e3a1e; color: #8eff8e; }
+#status.warn { background: #3a2a1e; color: #ffc78e; }
+#status.err  { background: #3a1e1e; color: #ff8e8e; }
+.preview-toggle { display: flex; align-items: center; gap: 6px; color: #ddd; }
+.preview-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 4px; overflow: hidden; }
+#preview { width: 100%; height: 100%; display: block; }
+.legend { display: flex; gap: 10px; font-size: 10px; color: #aaa; flex-wrap: wrap; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; }
+.dot-box  { background: #ffa84a; }
+.dot-crop { background: #4ade80; }
+.dot-dz   { background: #ddd; }
+.stats { display: flex; flex-direction: column; gap: 3px; }
+.stat-row { display: flex; justify-content: space-between; }
+.stat-row.bad span:last-child { color: #ff8e8e; font-weight: 700; }
+.section-divider {
+    font-size: 11px; color: #aaa; text-transform: uppercase; letter-spacing: 0.5px;
+    border-top: 1px solid #3a3a3a; padding-top: 6px; margin-top: 2px;
+}
+.latency-grid { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+.latency-row { display: flex; justify-content: space-between; color: #ccc; }
+.slider-row { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.slider-row label { display: flex; justify-content: space-between; color: #ddd; }
+.slider-row input[type=range] { width: 100%; }
+.toggle-row { display: flex; flex-direction: column; gap: 4px; }
+.button-row { display: flex; gap: 6px; }
+.button-row button {
+    flex: 1; min-height: 36px; background: #2d2d2d; color: #eee;
+    border: 1px solid #3d3d3d; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.button-row button:hover  { background: #3a3a3a; border-color: #5a5a5a; }
+.button-row button:active { background: #1f1f1f; }
+</style>
+</head>
+<body>
+<div class="panel">
+    <div id="status" class="warn">Connexion…</div>
+    <label class="preview-toggle"><input type="checkbox" id="t-preview"> Afficher l'aperçu vidéo</label>
+    <div id="preview-container" hidden>
+        <div class="preview-wrap"><canvas id="preview"></canvas></div>
+        <div class="legend">
+            <span><i class="dot dot-box"></i>détections</span>
+            <span><i class="dot dot-crop"></i>crop</span>
+            <span><i class="dot dot-dz"></i>zone morte</span>
+        </div>
+    </div>
+    <div class="stats">
+        <div class="stat-row"><span>Détecteur</span><span id="stat-detector">-</span></div>
+        <div class="stat-row"><span>Itérations/s</span><span id="stat-ips">-</span></div>
+        <div class="stat-row" id="row-detrate"><span>Taux de détection</span><span id="stat-detrate">-</span></div>
+        <div class="stat-row"><span>Commandes émises</span><span id="stat-cmds">-</span></div>
+    </div>
+    <div class="section-divider">Latences (médiane / p90)</div>
+    <div id="latency-grid" class="latency-grid"></div>
+    <div class="section-divider">Réglages</div>
+    <div id="sliders"></div>
+    <div class="toggle-row">
+        <label><input type="checkbox" id="t-snap"> Sans transition (snap)</label>
+        <label><input type="checkbox" id="t-upper"> Buste seulement</label>
+    </div>
+    <div class="button-row">
+        <button id="btn-pause">Pause</button>
+        <button id="btn-recenter">Recentrer</button>
+    </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+const STAGE_LABELS = { capture: 'Capture', detect: 'Détection', policy: 'Politique', emit: 'Envoi' };
+
+const FIELDS = [
+    { id: 'margin',      label: 'Marge',                     min: 0,   max: 1.5,  step: 0.01, fmt: v => v.toFixed(2) },
+    { id: 'min_crop_h',  label: 'Hauteur crop min',           min: 100, max: 2160, step: 10,   fmt: v => Math.round(v) + ' px' },
+    { id: 'dead_zone',   label: 'Zone morte',                 min: 0,   max: 0.5,  step: 0.01, fmt: v => v.toFixed(2) },
+    { id: 'dwell_ms',    label: 'Délai avant bascule',        min: 0,   max: 3000, step: 50,   fmt: v => Math.round(v) + ' ms' },
+    { id: 'ease_ms',     label: 'Durée de transition',        min: 0,   max: 2000, step: 20,   fmt: v => Math.round(v) + ' ms' },
+    { id: 'hold_ms',     label: 'Maintien après perte',       min: 0,   max: 5000, step: 50,   fmt: v => Math.round(v) + ' ms' },
+    { id: 'fps',         label: 'FPS de la boucle',           min: 1,   max: 30,   step: 1,    fmt: v => Math.round(v) + ' fps' },
+];
+
+let latestState = null;
+const lastLocalChange = {};
+const debounceTimers = {};
+
+const PREVIEW_KEY = 'avoloReframePreviewVisible';
+
+function loadPreviewVisible() {
+    try {
+        return localStorage.getItem(PREVIEW_KEY) === '1';
+    } catch (e) {
+        return false;
+    }
+}
+
+function savePreviewVisible(visible) {
+    try {
+        localStorage.setItem(PREVIEW_KEY, visible ? '1' : '0');
+    } catch (e) {
+        // storage unavailable: the choice just won't survive a reload
+    }
+}
+
+let previewVisible = loadPreviewVisible();
+
+function setStatus(text, cls) {
+    const el = $('status');
+    el.textContent = text;
+    el.className = cls;
+}
+
+function buildControls() {
+    const container = $('sliders');
+    for (const f of FIELDS) {
+        const row = document.createElement('div');
+        row.className = 'slider-row';
+        row.innerHTML = `<label>${f.label} <span id="v-${f.id}"></span></label>
+            <input type="range" id="s-${f.id}" min="${f.min}" max="${f.max}" step="${f.step}">`;
+        container.appendChild(row);
+        const input = row.querySelector('input');
+        input.addEventListener('input', () => {
+            const value = Number(input.value);
+            $('v-' + f.id).textContent = f.fmt(value);
+            lastLocalChange[f.id] = Date.now();
+            clearTimeout(debounceTimers[f.id]);
+            debounceTimers[f.id] = setTimeout(() => sendParams({ [f.id]: value }), 150);
+        });
+    }
+    $('t-snap').addEventListener('change', () => {
+        lastLocalChange.snap = Date.now();
+        sendParams({ snap: $('t-snap').checked });
+    });
+    $('t-upper').addEventListener('change', () => {
+        lastLocalChange.upper_body = Date.now();
+        sendParams({ upper_body: $('t-upper').checked });
+    });
+    $('btn-pause').onclick = () => postAction(latestState && latestState.paused ? 'resume' : 'pause');
+    $('btn-recenter').onclick = () => postAction('recenter');
+
+    const previewToggle = $('t-preview');
+    previewToggle.checked = previewVisible;
+    $('preview-container').hidden = !previewVisible;
+    previewToggle.addEventListener('change', () => {
+        previewVisible = previewToggle.checked;
+        $('preview-container').hidden = !previewVisible;
+        savePreviewVisible(previewVisible);
+        if (previewVisible) pollFrame();
+    });
+}
+
+// A slider just moved locally: don't let the next poll snap it back
+// mid-drag, but resync once the round-trip has had time to land.
+function recentlyChanged(field) {
+    return Date.now() - (lastLocalChange[field] || 0) < 800;
+}
+
+function syncControls(state) {
+    for (const f of FIELDS) {
+        const input = $('s-' + f.id);
+        if (f.id === 'min_crop_h' && state.source_h) input.max = state.source_h;
+        if (recentlyChanged(f.id) || document.activeElement === input) continue;
+        const value = f.id === 'fps' ? state.fps : state.params[f.id];
+        input.value = value;
+        $('v-' + f.id).textContent = f.fmt(value);
+    }
+    if (!recentlyChanged('snap')) $('t-snap').checked = state.params.snap;
+    if (!recentlyChanged('upper_body')) $('t-upper').checked = state.upper_body;
+    $('btn-pause').textContent = state.paused ? 'Reprendre' : 'Pause';
+}
+
+function renderLatency(stats) {
+    const grid = $('latency-grid');
+    grid.innerHTML = '';
+    for (const [key, label] of Object.entries(STAGE_LABELS)) {
+        const s = stats[key] || { median: 0, p90: 0 };
+        const row = document.createElement('div');
+        row.className = 'latency-row';
+        row.innerHTML = `<span>${label}</span><span>${s.median.toFixed(1)} / ${s.p90.toFixed(1)} ms</span>`;
+        grid.appendChild(row);
+    }
+}
+
+function updateStats(state) {
+    $('stat-detector').textContent = state.detector;
+    $('stat-ips').textContent = state.iterations_per_s.toFixed(1);
+    $('stat-detrate').textContent = Math.round(state.detection_rate * 100) + ' %';
+    $('row-detrate').classList.toggle('bad', state.detection_rate < 0.3);
+    $('stat-cmds').textContent = state.commands_emitted;
+    renderLatency(state.stats);
+}
+
+function updateConnection(state) {
+    if (state.paused) setStatus('En pause', 'warn');
+    else if (!state.connected) setStatus('OBS déconnecté — reconnexion…', 'err');
+    else setStatus('En direct', 'ok');
+}
+
+function updateUI(state) {
+    updateStats(state);
+    syncControls(state);
+    updateConnection(state);
+    renderCanvas();
+}
+
+async function sendParams(payload) {
+    try {
+        const res = await fetch('/api/params', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+            latestState = await res.json();
+            updateUI(latestState);
+        } else {
+            const err = await res.json().catch(() => ({}));
+            console.warn('réglage refusé :', err.error || res.status);
+        }
+    } catch (e) {
+        // next /api/state poll will resync
+    }
+}
+
+async function postAction(action) {
+    try {
+        const res = await fetch('/api/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action }),
+        });
+        if (res.ok) {
+            latestState = await res.json();
+            updateUI(latestState);
+        }
+    } catch (e) {
+        // same: next poll will resync
+    }
+}
+
+async function pollState() {
+    try {
+        const res = await fetch('/api/state', { cache: 'no-store' });
+        if (!res.ok) throw new Error(String(res.status));
+        latestState = await res.json();
+        updateUI(latestState);
+    } catch (e) {
+        setStatus('En attente de la boucle de recadrage…', 'err');
+    }
+}
+
+// -- Preview: image + overlay --------------------------------------------
+
+const img = new Image();
+const canvas = $('preview');
+const ctx = canvas.getContext('2d');
+let frameInFlight = false;
+let lastUrl = null;
+
+async function pollFrame() {
+    if (frameInFlight) return;
+    frameInFlight = true;
+    try {
+        const res = await fetch('/api/frame.jpg', { cache: 'no-store' });
+        if (res.ok) {
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            img.onload = () => {
+                if (lastUrl) URL.revokeObjectURL(lastUrl);
+                lastUrl = url;
+                renderCanvas();
+            };
+            img.onerror = () => URL.revokeObjectURL(url);
+            img.src = url;
+        }
+    } catch (e) {
+        // no frame available yet, next poll retries
+    } finally {
+        frameInFlight = false;
+    }
+}
+
+function drawDeadZone(crop, deadZone, w, h) {
+    const cx = (crop.x + crop.w / 2) * w;
+    const cy = (crop.y + crop.h / 2) * h;
+    const halfW = deadZone * crop.w * w;
+    const halfH = deadZone * crop.h * h;
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(cx - halfW, cy - halfH, halfW * 2, halfH * 2);
+    ctx.setLineDash([]);
+}
+
+function renderCanvas() {
+    if (!img.complete || img.naturalWidth === 0) return;
+    if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+    }
+    const w = canvas.width, h = canvas.height;
+    ctx.drawImage(img, 0, 0);
+    if (!latestState) return;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#ffa84a';
+    for (const b of latestState.boxes) ctx.strokeRect(b.x * w, b.y * h, b.w * w, b.h * h);
+    const crop = latestState.crop;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#4ade80';
+    ctx.strokeRect(crop.x * w, crop.y * h, crop.w * w, crop.h * h);
+    drawDeadZone(crop, latestState.params.dead_zone, w, h);
+}
+
+buildControls();
+setInterval(() => { pollState(); if (previewVisible) pollFrame(); }, 250);
+pollState();
+if (previewVisible) pollFrame();
+</script>
+</body>
+</html>
