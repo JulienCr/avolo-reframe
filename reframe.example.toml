@@ -1,0 +1,53 @@
+# Exemple de configuration pour scripts.run et scripts.setup_scene.
+# Copiez ce fichier en reframe.toml à la racine du dépôt pour qu'il soit
+# chargé automatiquement (ou passez --config chemin/vers/fichier.toml).
+#
+# Priorité : ligne de commande > ce fichier > valeurs par défaut intégrées.
+# Chaque valeur ci-dessous EST la valeur par défaut intégrée : ce fichier ne
+# change rien tant que vous ne modifiez pas une valeur.
+
+[connection]
+# Utilisé par scripts.run ET scripts.setup_scene.
+url = "ws://127.0.0.1:4455"
+password = ""  # vide = pas d'authentification obs-websocket
+control_port = 4466  # port du dock de contrôle HTTP (0 pour le désactiver)
+
+# scene n'est utilisé que par scripts.run (le nom de scène est fixe côté
+# setup_scene : scripts.layout.SCENE_NAME).
+scene = "AVOLO Reframe POC"
+
+[detector]
+detector = "pose"  # pose, vision ou yolo
+upper_body = false  # tête+torse au lieu du corps entier (vision seulement)
+
+[loop]
+fps = 12.0
+width = 640  # largeur de décodage des captures, en pixels
+duration = 0.0  # 0 = tourne jusqu'à Ctrl-C
+log = ""  # vide = pas de journal JSONL
+features = false  # extraction visage/pose pour l'overlay OBS (coûteux)
+
+[policy]
+margin = 0.18
+min_crop_h = 960.0
+dead_zone = 0.12
+dwell_ms = 400.0
+ease_ms = 320.0  # durée à la distance de référence (675 px)
+ease_min_ms = 180.0
+ease_max_ms = 900.0
+snap = false  # true = coupe instantanée, jamais de transition animée
+hold_ms = 1500.0
+eye_line = 0.33  # ligne des yeux visée, en fraction de la hauteur du cadre
+zoom_dead_zone = 0.25  # tolérance de zoom séparée de dead_zone
+
+[split]
+split_enabled = true  # cadrage empilé à deux sujets (false = toujours seul)
+split_min_gap = 0.15
+split_enter_ms = 600.0
+split_exit_ms = 3000.0
+track_hold_ms = 6000.0
+
+[source]
+# scripts.setup_scene uniquement : le choix de la source RF Cam.
+media_file = ""  # vide = fixture de test par défaut, sinon la caméra
+camera = false  # true = force une caméra même si la fixture existe

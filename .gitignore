@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+
+# Artefacts de test locaux, non versionnes
+reframe.toml
+tests/fixtures/*.mp4
+tests/corpus/traces/
+
+# Mais tests/corpus/reference-summary.json, frames/ et tools/ le sont :
+# sans l'extrait video, ils sont le seul temoignage durable des mesures.
