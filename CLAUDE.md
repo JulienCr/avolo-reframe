@@ -31,7 +31,8 @@ uv run python -m scripts.setup_scene --force --camera   # idem, mais sur la cam�
 uv run python -m scripts.run --upper-body        # la boucle
 uv run python -m scripts.run --upper-body --features    # + overlay des traits dans OBS (~25 ms/image en plus)
 uv run python -m scripts.corpus tests/fixtures/lab-avolo-58m22-70m00.mp4 \
-    --upper-body --fps 12 --out trace.jsonl      # rejeu déterministe hors OBS
+    --detector pose --fps 12 --out trace.jsonl \
+    --summary-json resume.json                   # rejeu déterministe hors OBS, 75 s
 ```
 
 **La source par défaut est la vidéo de test, pas la caméra.** Une caméra rend chaque exécution différente, donc deux mesures ne sont plus comparables. `--camera` pour rebasculer.
@@ -83,7 +84,23 @@ Ne rien affirmer sur la cadence de détection, la latence ou un changement de mo
 
 **Écarter systématiquement la première mesure.** Le démarrage à froid a produit deux conclusions fausses dans ce dépôt : 233 ms sur un `GetSourceScreenshot` qui en fait 5, et 115 ms sur une détection qui en fait 16. Une conclusion sur n=1 est une conclusion sur du bruit.
 
-La politique causale, elle, n'a toujours **presque aucun chiffre derrière elle** : `--log` produit la trace, et le corpus de cas de contrôle reste à bâtir sur le modèle de `scripts/framing/cases.ts` d'`avolo-shorts`.
+La politique causale reste ce qui a le moins de chiffres derrière elle. L'instrument existe désormais : voir la section suivante.
+
+## Le corpus de cas de contrôle
+
+**Tout changement de `core/` se mesure contre le corpus, pas seulement contre `pytest`.** Rejeu déterministe hors OBS, 75 s pour 698 s de vidéo, puis comparaison de l'agrégat produit à [`tests/corpus/reference-summary.json`](tests/corpus/README.md). Un balayage de paramètres est donc praticable.
+
+**Régénérer la référence dans le commit qui change le cœur, jamais après.** Elle est arrivée périmée dans le dépôt le 13 septembre 2026, produite par un cœur antérieur à `0b68bec` : personne ne l'a vu, parce que rien ne la comparait à un rejeu. La démonstration est dans [`tests/corpus/README.md`](tests/corpus/README.md).
+
+**Le rejeu est déterministe**, vérifié le 13 septembre 2026 : deux rejeux consécutifs donnent le même agrégat et la même trace, au bit près. Tout écart est donc un vrai écart, jamais du bruit de détection.
+
+**Mesurer le cadre appliqué (`state.cells` en mode split, `state.current` sinon), jamais la cible calculée.** `crop_vs_subjects` lisait `target.cx` et faisait passer 3 415 images pour des cadrages ratés qui n'en étaient pas. Le mode split porte 54 % des images de l'extrait : une mesure qui l'ignore décrit surtout la politique qu'on n'applique pas.
+
+**`scripts/corpus.py` expose 16 des 18 champs de `PolicyParams`.** Les deux absents, `source_w` et `source_h`, viennent du sondage de la vidéo et ne sont pas des réglages.
+
+**L'extrait et les traces sont ignorés par git, donc absents d'un worktree.** Un agent dépêché en worktree ne peut pas rejouer le corpus long : lui confier le corpus court, ou le faire travailler dans le dépôt principal. Un agent qui rend une suite verte sans avoir pu mesurer n'a rien démontré.
+
+**Les bascules de plan de l'extrait sont repérées** dans [`tests/corpus/cuts/`](tests/corpus/cuts/README.md) : 150 évènements dédupliqués, 40 candidats retenus, planches contact et scripts de rejeu. Elles servent à séparer ce que la politique fait des coupes de ce qu'elle fait du bruit de détection.
 
 ## Langue
 

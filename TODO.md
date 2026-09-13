@@ -39,6 +39,10 @@ derrière elle. L'instrument existe désormais ; les mesures, non.
       politique fait des **coupes** de ce qu'elle fait du **bruit de détection**.
       Or les bascules sont sa raison d'être. Quelques dizaines de secondes
       annotées vaudraient plus que ces onze minutes.
+- [ ] **Regarder l'extrait court en entier, une fois, à l'œil.** La validation
+      par paires d'images ne juge que les instants **signalés** par le repérage :
+      une coupe ratée par l'algorithme y est invisible par construction. C'est la
+      seule façon d'attraper les faux négatifs, et ça coûte 40 secondes.
 - [ ] **Balayer les paramètres de la politique sur le corpus.** Un rejeu complet
       coûte 75 s pour 698 s de vidéo, donc un balayage est praticable.
 - [ ] **Calibrer `_CROWN_FACTOR`** (1,0 aujourd'hui). C'est une règle de pouce :
@@ -52,11 +56,10 @@ derrière elle. L'instrument existe désormais ; les mesures, non.
 
 ## Défauts connus
 
-- [ ] **`scripts/corpus.py` n'expose pas les paramètres de split** —
-      `track_hold_ms`, `split_enter_ms`, `split_exit_ms`, ni `eye_line`,
-      `zoom_dead_zone`, `max_zoom`. **L'instrument de réglage ne peut pas
-      atteindre les boutons qu'on règle**, ce qui a déjà obligé à mesurer à la
-      main. À corriger avant tout balayage sérieux.
+- [x] **`scripts/corpus.py` expose désormais 16 des 18 champs de
+      `PolicyParams`** (13 septembre 2026). Les deux absents, `source_w` et
+      `source_h`, viennent du sondage de la vidéo et ne sont pas des réglages.
+      Le balayage n'est plus bloqué.
 - [ ] **Distinguer « le sujet est sorti du cadre » de « la détection a
       décroché ».** Aujourd'hui les deux passent par `track_hold_ms`, calé sur
       les 4 850 ms de décrochage moyen — donc un sujet qui sort vraiment fait
