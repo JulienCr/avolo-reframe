@@ -1,0 +1,713 @@
+[
+  {
+    "pts_ms": 583.3333333333333,
+    "index_before": 6,
+    "index_after": 7,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 160.1,
+    "scale_jump_log": 0.4993,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 3.65,
+    "confidence": "moyenne",
+    "before_ms": 500.0,
+    "after_ms": 583.3333333333333
+  },
+  {
+    "pts_ms": 3083.333333333333,
+    "index_before": 36,
+    "index_after": 37,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 158.9,
+    "scale_jump_log": 0.4852,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 3.592,
+    "confidence": "moyenne",
+    "before_ms": 3000.0,
+    "after_ms": 3083.333333333333
+  },
+  {
+    "pts_ms": 80333.33333333333,
+    "index_before": 963,
+    "index_after": 964,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 192.5,
+    "scale_jump_log": 0.5389,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 4.008,
+    "confidence": "moyenne",
+    "before_ms": 80250.0,
+    "after_ms": 80333.33333333333
+  },
+  {
+    "pts_ms": 204666.66666666666,
+    "index_before": 2455,
+    "index_after": 2456,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 208.6,
+    "scale_jump_log": 0.4885,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 3.935,
+    "confidence": "moyenne",
+    "before_ms": 204583.3333333333,
+    "after_ms": 204666.66666666666
+  },
+  {
+    "pts_ms": 283916.6666666666,
+    "index_before": 3406,
+    "index_after": 3407,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 216.4,
+    "scale_jump_log": 0.4464,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 3.837,
+    "confidence": "moyenne",
+    "before_ms": 283833.3333333333,
+    "after_ms": 283916.6666666666
+  },
+  {
+    "pts_ms": 285750.0,
+    "index_before": 3428,
+    "index_after": 3429,
+    "signals": [
+      "center_jump",
+      "scale_jump"
+    ],
+    "center_jump_px": 278.9,
+    "scale_jump_log": 0.5211,
+    "ndet_before": 1,
+    "ndet_after": 3,
+    "score": 3.721,
+    "confidence": "moyenne",
+    "before_ms": 285666.6666666666,
+    "after_ms": 285750.0
+  },
+  {
+    "pts_ms": 311750.0,
+    "index_before": 3740,
+    "index_after": 3741,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 210.5,
+    "scale_jump_log": 0.5233,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 4.073,
+    "confidence": "moyenne",
+    "before_ms": 311666.6666666666,
+    "after_ms": 311750.0
+  },
+  {
+    "pts_ms": 325833.3333333333,
+    "index_before": 3909,
+    "index_after": 3910,
+    "signals": [
+      "center_jump",
+      "scale_jump"
+    ],
+    "center_jump_px": 203.8,
+    "scale_jump_log": 0.5671,
+    "ndet_before": 2,
+    "ndet_after": 2,
+    "score": 3.384,
+    "confidence": "moyenne",
+    "before_ms": 325750.0,
+    "after_ms": 325833.3333333333
+  },
+  {
+    "pts_ms": 334166.6666666666,
+    "index_before": 4009,
+    "index_after": 4010,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 156.7,
+    "scale_jump_log": 0.5319,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 3.744,
+    "confidence": "moyenne",
+    "before_ms": 334083.3333333333,
+    "after_ms": 334166.6666666666
+  },
+  {
+    "pts_ms": 344500.0,
+    "index_before": 4133,
+    "index_after": 4134,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 156.2,
+    "scale_jump_log": 0.5837,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 3.926,
+    "confidence": "moyenne",
+    "before_ms": 344416.6666666666,
+    "after_ms": 344500.0
+  },
+  {
+    "pts_ms": 353833.3333333333,
+    "index_before": 4245,
+    "index_after": 4246,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 153.4,
+    "scale_jump_log": 0.4185,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 3.317,
+    "confidence": "moyenne",
+    "before_ms": 353750.0,
+    "after_ms": 353833.3333333333
+  },
+  {
+    "pts_ms": 381750.0,
+    "index_before": 4580,
+    "index_after": 4581,
+    "signals": [
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 74.4,
+    "scale_jump_log": 0.6519,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 3.128,
+    "confidence": "moyenne",
+    "before_ms": 381666.6666666666,
+    "after_ms": 381750.0
+  },
+  {
+    "pts_ms": 385333.3333333333,
+    "index_before": 4623,
+    "index_after": 4624,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 195.1,
+    "scale_jump_log": 0.5241,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 3.973,
+    "confidence": "moyenne",
+    "before_ms": 385250.0,
+    "after_ms": 385333.3333333333
+  },
+  {
+    "pts_ms": 391750.0,
+    "index_before": 4700,
+    "index_after": 4701,
+    "signals": [
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 87.1,
+    "scale_jump_log": 0.7434,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 3.455,
+    "confidence": "moyenne",
+    "before_ms": 391666.6666666666,
+    "after_ms": 391750.0
+  },
+  {
+    "pts_ms": 412583.3333333333,
+    "index_before": 4950,
+    "index_after": 4951,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 161.4,
+    "scale_jump_log": 0.545,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 3.822,
+    "confidence": "moyenne",
+    "before_ms": 412500.0,
+    "after_ms": 412583.3333333333
+  },
+  {
+    "pts_ms": 436000.0,
+    "index_before": 5231,
+    "index_after": 5232,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 152.6,
+    "scale_jump_log": 0.5459,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 3.767,
+    "confidence": "moyenne",
+    "before_ms": 435916.6666666666,
+    "after_ms": 436000.0
+  },
+  {
+    "pts_ms": 438250.0,
+    "index_before": 5258,
+    "index_after": 5259,
+    "signals": [
+      "center_jump",
+      "scale_jump"
+    ],
+    "center_jump_px": 343.6,
+    "scale_jump_log": 0.5726,
+    "ndet_before": 1,
+    "ndet_after": 1,
+    "score": 4.336,
+    "confidence": "moyenne",
+    "before_ms": 438166.6666666666,
+    "after_ms": 438250.0
+  },
+  {
+    "pts_ms": 459750.0,
+    "index_before": 5516,
+    "index_after": 5517,
+    "signals": [
+      "center_jump",
+      "scale_jump"
+    ],
+    "center_jump_px": 500.1,
+    "scale_jump_log": 0.6984,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 5.828,
+    "confidence": "haute",
+    "before_ms": 459666.6666666666,
+    "after_ms": 459750.0
+  },
+  {
+    "pts_ms": 482500.0,
+    "index_before": 5789,
+    "index_after": 5790,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 519.8,
+    "scale_jump_log": 0.6403,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 6.552,
+    "confidence": "haute",
+    "before_ms": 482416.6666666666,
+    "after_ms": 482500.0
+  },
+  {
+    "pts_ms": 482916.6666666666,
+    "index_before": 5794,
+    "index_after": 5795,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 484.4,
+    "scale_jump_log": 0.5815,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 6.106,
+    "confidence": "haute",
+    "before_ms": 482833.3333333333,
+    "after_ms": 482916.6666666666
+  },
+  {
+    "pts_ms": 483333.3333333333,
+    "index_before": 5799,
+    "index_after": 5800,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 586.9,
+    "scale_jump_log": 0.6712,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 7.109,
+    "confidence": "haute",
+    "before_ms": 483250.0,
+    "after_ms": 483333.3333333333
+  },
+  {
+    "pts_ms": 486166.6666666666,
+    "index_before": 5833,
+    "index_after": 5834,
+    "signals": [
+      "center_jump",
+      "scale_jump"
+    ],
+    "center_jump_px": 413.9,
+    "scale_jump_log": 0.5839,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 4.844,
+    "confidence": "moyenne",
+    "before_ms": 486083.3333333333,
+    "after_ms": 486166.6666666666
+  },
+  {
+    "pts_ms": 554083.3333333333,
+    "index_before": 6648,
+    "index_after": 6649,
+    "signals": [
+      "center_jump",
+      "scale_jump"
+    ],
+    "center_jump_px": 184.8,
+    "scale_jump_log": 0.6019,
+    "ndet_before": 1,
+    "ndet_after": 1,
+    "score": 3.381,
+    "confidence": "moyenne",
+    "before_ms": 554000.0,
+    "after_ms": 554083.3333333333
+  },
+  {
+    "pts_ms": 555583.3333333333,
+    "index_before": 6666,
+    "index_after": 6667,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 647.8,
+    "scale_jump_log": 0.8325,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 8.092,
+    "confidence": "haute",
+    "before_ms": 555500.0,
+    "after_ms": 555583.3333333333
+  },
+  {
+    "pts_ms": 582333.3333333333,
+    "index_before": 6987,
+    "index_after": 6988,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 712.9,
+    "scale_jump_log": 0.5108,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 7.377,
+    "confidence": "haute",
+    "before_ms": 582250.0,
+    "after_ms": 582333.3333333333
+  },
+  {
+    "pts_ms": 590000.0,
+    "index_before": 7079,
+    "index_after": 7080,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 730.4,
+    "scale_jump_log": 0.5103,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 7.492,
+    "confidence": "haute",
+    "before_ms": 589916.6666666666,
+    "after_ms": 590000.0
+  },
+  {
+    "pts_ms": 595000.0,
+    "index_before": 7139,
+    "index_after": 7140,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 674.2,
+    "scale_jump_log": 0.4193,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 6.792,
+    "confidence": "haute",
+    "before_ms": 594916.6666666666,
+    "after_ms": 595000.0
+  },
+  {
+    "pts_ms": 598666.6666666666,
+    "index_before": 7183,
+    "index_after": 7184,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 739.4,
+    "scale_jump_log": 0.4155,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 7.213,
+    "confidence": "haute",
+    "before_ms": 598583.3333333333,
+    "after_ms": 598666.6666666666
+  },
+  {
+    "pts_ms": 622250.0,
+    "index_before": 7466,
+    "index_after": 7467,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 764.2,
+    "scale_jump_log": 0.4736,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 7.586,
+    "confidence": "haute",
+    "before_ms": 622166.6666666666,
+    "after_ms": 622250.0
+  },
+  {
+    "pts_ms": 624916.6666666666,
+    "index_before": 7498,
+    "index_after": 7499,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 775.5,
+    "scale_jump_log": 0.4757,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 7.669,
+    "confidence": "haute",
+    "before_ms": 624833.3333333333,
+    "after_ms": 624916.6666666666
+  },
+  {
+    "pts_ms": 629333.3333333333,
+    "index_before": 7551,
+    "index_after": 7552,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 782.5,
+    "scale_jump_log": 0.4996,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 7.801,
+    "confidence": "haute",
+    "before_ms": 629250.0,
+    "after_ms": 629333.3333333333
+  },
+  {
+    "pts_ms": 632250.0,
+    "index_before": 7586,
+    "index_after": 7587,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 793.9,
+    "scale_jump_log": 0.504,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 7.893,
+    "confidence": "haute",
+    "before_ms": 632166.6666666666,
+    "after_ms": 632250.0
+  },
+  {
+    "pts_ms": 642166.6666666666,
+    "index_before": 7705,
+    "index_after": 7706,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 715.3,
+    "scale_jump_log": 0.508,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 7.383,
+    "confidence": "haute",
+    "before_ms": 642083.3333333333,
+    "after_ms": 642166.6666666666
+  },
+  {
+    "pts_ms": 648333.3333333333,
+    "index_before": 7779,
+    "index_after": 7780,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 763.4,
+    "scale_jump_log": 0.5045,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 7.691,
+    "confidence": "haute",
+    "before_ms": 648250.0,
+    "after_ms": 648333.3333333333
+  },
+  {
+    "pts_ms": 671083.3333333333,
+    "index_before": 8052,
+    "index_after": 8053,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 724.8,
+    "scale_jump_log": 0.4906,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 7.384,
+    "confidence": "haute",
+    "before_ms": 671000.0,
+    "after_ms": 671083.3333333333
+  },
+  {
+    "pts_ms": 675750.0,
+    "index_before": 8108,
+    "index_after": 8109,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 731.2,
+    "scale_jump_log": 0.4241,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 7.189,
+    "confidence": "haute",
+    "before_ms": 675666.6666666666,
+    "after_ms": 675750.0
+  },
+  {
+    "pts_ms": 682250.0,
+    "index_before": 8186,
+    "index_after": 8187,
+    "signals": [
+      "center_jump",
+      "scale_jump"
+    ],
+    "center_jump_px": 458.7,
+    "scale_jump_log": 0.5544,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 5.038,
+    "confidence": "haute",
+    "before_ms": 682166.6666666666,
+    "after_ms": 682250.0
+  },
+  {
+    "pts_ms": 682666.6666666666,
+    "index_before": 8191,
+    "index_after": 8192,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 616.9,
+    "scale_jump_log": 0.426,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 6.434,
+    "confidence": "haute",
+    "before_ms": 682583.3333333333,
+    "after_ms": 682666.6666666666
+  },
+  {
+    "pts_ms": 689500.0,
+    "index_before": 8273,
+    "index_after": 8274,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 789.0,
+    "scale_jump_log": 0.5013,
+    "ndet_before": 1,
+    "ndet_after": 2,
+    "score": 7.85,
+    "confidence": "haute",
+    "before_ms": 689416.6666666666,
+    "after_ms": 689500.0
+  },
+  {
+    "pts_ms": 697000.0,
+    "index_before": 8363,
+    "index_after": 8364,
+    "signals": [
+      "center_jump",
+      "scale_jump",
+      "ndet_change_persistent"
+    ],
+    "center_jump_px": 578.2,
+    "scale_jump_log": 0.4931,
+    "ndet_before": 2,
+    "ndet_after": 1,
+    "score": 6.416,
+    "confidence": "haute",
+    "before_ms": 696916.6666666666,
+    "after_ms": 697000.0
+  }
+]
