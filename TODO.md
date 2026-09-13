@@ -60,6 +60,22 @@ derrière elle. L'instrument existe désormais ; les mesures, non.
       `PolicyParams`** (13 septembre 2026). Les deux absents, `source_w` et
       `source_h`, viennent du sondage de la vidéo et ne sont pas des réglages.
       Le balayage n'est plus bloqué.
+- [ ] **`min_crop_h` est en pixels absolus (960), pas en fraction de la hauteur
+      source.** Sur les fenêtres courtes réencodées à 640x360, elle vaut 2,7 fois
+      la hauteur disponible : le crop est épinglé à pleine hauteur sur **100 %**
+      des images, une seule valeur distincte. La politique n'y zoome jamais, donc
+      aucun invariant lié au zoom ne peut s'écrire sur le corpus court. Passer en
+      fraction (`960 / 1080 = 0,889`) laisse l'extrait long **identique** et rend
+      les deux corpus comparables. Même remède pour la marge de crâne, aujourd'hui
+      en pixels donc divisée par trois d'un corpus à l'autre.
+- [ ] **La politique sous-réagit aux bascules de plan.** Mesuré le 13 septembre
+      2026 sur les fenêtres annotées : la fenêtre C contient **9 vraies coupes** et
+      la politique n'émet que **3 commandes** en 40 s, quand la fenêtre A en émet 4
+      pour 2 coupes. Au même endroit, **25,6 % des cellules split ratent leur
+      sujet** (197 sur 768) contre 0 % dans la fenêtre A. Le plan change, le cadre
+      ne bouge pas, et il reste faux jusqu'à la bascule suivante. Vérité terrain
+      dans `tests/corpus/clips/cuts_ground_truth.json`. C'est le premier défaut
+      mesuré de la politique causale.
 - [ ] **Distinguer « le sujet est sorti du cadre » de « la détection a
       décroché ».** Aujourd'hui les deux passent par `track_hold_ms`, calé sur
       les 4 850 ms de décrochage moyen — donc un sujet qui sort vraiment fait
