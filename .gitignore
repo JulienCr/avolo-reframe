@@ -9,5 +9,6 @@ tests/fixtures/*.mp4
 tests/corpus/traces/
 tests/corpus/cuts/images/
 
-# Mais tests/corpus/reference-summary.json, frames/ et tools/ le sont :
-# sans l'extrait video, ils sont le seul temoignage durable des mesures.
+# Ce qui EST versionne sous tests/corpus/ : reference-summary.json, frames/,
+# tools/, cuts/ (hors images/) et clips/ -- dont deux .mp4 de 40 s, la seule
+# exception a la ligne 8. C'est le seul corpus qu'un worktree recoit.
