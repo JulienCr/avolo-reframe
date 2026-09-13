@@ -1,0 +1,1043 @@
+<!doctype html>
+<title>Pipeline AVOLO Reframe</title>
+<style>
+  :root {
+    --paper: #eef0e9;
+    --paper-raised: #e2e6dc;
+    --paper-line: #dfe3d8;
+    --ink: #1c231e;
+    --ink-soft: #4d564b;
+    --ink-faint: #7c8577;
+    --rule: #c7cdbd;
+    --accent: #a8650f;
+    --accent-ink: #6e4409;
+    --accent-soft: #f0dfc0;
+    --core: #1f6f6a;
+    --core-soft: #d9ece8;
+    --warn: #a3402b;
+    --warn-soft: #f3ddd3;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Code", monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
+    --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #eef0e9; --paper-raised: #e2e6dc; --paper-line: #dfe3d8;
+      --ink: #1c231e; --ink-soft: #4d564b; --ink-faint: #7c8577; --rule: #c7cdbd;
+      --accent: #a8650f; --accent-ink: #6e4409; --accent-soft: #f0dfc0;
+      --core: #1f6f6a; --core-soft: #d9ece8; --warn: #a3402b; --warn-soft: #f3ddd3;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #eef0e9; --paper-raised: #e2e6dc; --paper-line: #dfe3d8;
+    --ink: #1c231e; --ink-soft: #4d564b; --ink-faint: #7c8577; --rule: #c7cdbd;
+    --accent: #a8650f; --accent-ink: #6e4409; --accent-soft: #f0dfc0;
+    --core: #1f6f6a; --core-soft: #d9ece8; --warn: #a3402b; --warn-soft: #f3ddd3;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.55;
+    padding: 0 20px 80px;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+
+  h1, h2, h3 { font-family: var(--serif); font-weight: 600; color: var(--ink); }
+  h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 0.3em; }
+  h2 { font-size: 1.5rem; margin: 0 0 0.6em; }
+  h3 { font-size: 1.05rem; margin: 1.6em 0 0.5em; }
+  p { max-width: 68ch; }
+  a { color: var(--accent-ink); }
+  code {
+    font-family: var(--mono); font-size: 0.88em; background: var(--paper-raised);
+    padding: 0.1em 0.35em; border-radius: 4px;
+  }
+
+  /* ---------- hero ---------- */
+  .hero {
+    max-width: 1000px; margin: 0 auto; padding: 44px 20px 8px;
+  }
+  .hero-kicker {
+    font-family: var(--mono); font-size: 0.8rem; color: var(--ink-faint);
+    letter-spacing: 0.02em; margin-bottom: 10px;
+  }
+  .hero h1 { max-width: 20ch; }
+  .hero p { color: var(--ink-soft); font-size: 1.05rem; max-width: 58ch; }
+  .hero figure { margin: 28px 0 4px; }
+
+  /* ---------- layout: sidebar + main ---------- */
+  .layout { max-width: 1000px; margin: 0 auto; display: grid; grid-template-columns: 200px 1fr; gap: 40px; }
+  nav.toc {
+    position: sticky; top: 24px; align-self: start;
+    font-family: var(--mono); font-size: 0.82rem;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--rule); }
+  nav.toc li { margin: 0; }
+  nav.toc a {
+    display: block; padding: 7px 0 7px 14px; color: var(--ink-soft); text-decoration: none;
+    border-left: 2px solid transparent; margin-left: -2px;
+  }
+  nav.toc a:hover { color: var(--ink); border-left-color: var(--accent); }
+  nav.toc .num { color: var(--accent-ink); margin-right: 6px; }
+
+  @media (max-width: 780px) {
+    .layout { display: block; }
+    nav.toc {
+      position: static; margin-bottom: 32px; border-top: 1px solid var(--rule);
+      border-bottom: 1px solid var(--rule); padding: 10px 0;
+    }
+    nav.toc ol { border-left: none; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+    nav.toc a { padding: 4px 0; border-left: none; }
+  }
+
+  section { margin-bottom: 64px; scroll-margin-top: 18px; }
+  section > .num-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 50%; background: var(--ink);
+    color: var(--paper); font-family: var(--mono); font-size: 0.8rem;
+    margin-right: 10px; position: relative; top: -2px;
+  }
+
+  /* ---------- callouts ---------- */
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    padding: 12px 16px; margin: 18px 0; border-radius: 0 6px 6px 0;
+  }
+  .callout.trap { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout.core { border-left-color: var(--core); background: var(--core-soft); }
+  .callout p { margin: 0; }
+  .callout p + p { margin-top: 0.6em; }
+  .callout .label {
+    font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--warn); display: block; margin-bottom: 6px;
+  }
+  .callout.core .label { color: var(--core); }
+  .callout.trap .label { color: var(--warn); }
+  .callout:not(.trap):not(.core) .label { color: var(--accent-ink); }
+
+  /* ---------- tables ---------- */
+  .table-wrap { overflow-x: auto; margin: 20px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; min-width: 460px; }
+  th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--rule); }
+  th { font-family: var(--mono); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-faint); font-weight: 500; }
+  td.num, th.num { font-family: var(--mono); text-align: right; }
+  tr:last-child td { font-weight: 600; }
+
+  /* ---------- endpoint list ---------- */
+  .endpoints { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 8px; }
+  .endpoints li {
+    display: flex; gap: 12px; align-items: baseline; padding: 8px 12px;
+    background: var(--paper-raised); border-radius: 6px; font-size: 0.92rem;
+  }
+  .endpoints code.verb {
+    font-weight: 700; color: var(--accent-ink); min-width: 3.4em; flex: none;
+  }
+  .endpoints .path { font-family: var(--mono); font-weight: 600; }
+  .endpoints .desc { color: var(--ink-soft); }
+
+  /* ---------- diagrams ---------- */
+  figure { margin: 24px 0; }
+  .diagram-wrap { overflow-x: auto; border: 1px solid var(--paper-line); border-radius: 8px; background: #f5f6f0; }
+  .diagram-wrap svg { display: block; min-width: 560px; width: 100%; height: auto; }
+  /* Un arbre de decision a le droit de defiler, pas d'etre reduit : a 73 % ses
+     libelles de 9 px tombent a 6,6 px. Taille native, defilement assume. */
+  .diagram-wrap.native svg { min-width: 1040px; }
+  figcaption { font-size: 0.86rem; color: var(--ink-faint); margin-top: 8px; }
+
+  footer {
+    max-width: 760px; margin: 60px auto 0; padding-top: 24px; border-top: 1px solid var(--rule);
+    font-size: 0.82rem; color: var(--ink-faint); font-family: var(--mono);
+  }
+</style>
+
+<div class="hero">
+  <div class="hero-kicker">AVOLO Reframe — pipeline vidéo</div>
+  <h1>De OBS à OBS, en une boucle</h1>
+  <p>
+    Rien n'ouvre la caméra. La boucle demande une capture à OBS, détecte un corps, calcule
+    un rectangle, et renvoie ce rectangle à OBS — cinq à neuf fois toutes les douze secondes,
+    pas vingt-cinq fois par seconde.
+  </p>
+  <figure>
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 900 340" role="img" aria-labelledby="loop-title loop-desc">
+        <title id="loop-title">La boucle, de OBS à OBS</title>
+        <desc id="loop-desc">
+          OBS envoie une capture JPEG, un détecteur y trouve un corps, la politique pure calcule
+          un rectangle, et OBS applique ce rectangle en crop sur l'item de scène ; l'envoi retourne
+          au point de départ.
+        </desc>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#4d564b"/>
+          </marker>
+        </defs>
+
+        <rect x="24" y="118" width="150" height="64" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+        <text x="99" y="145" text-anchor="middle" font-family="ui-monospace,monospace" font-size="14" font-weight="600" fill="#1c231e">OBS</text>
+        <text x="99" y="163" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#4d564b">source « RF Cam »</text>
+
+        <rect x="252" y="26" width="160" height="64" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+        <text x="332" y="50" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="600" fill="#1c231e">Capture</text>
+        <text x="332" y="66" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5" fill="#4d564b">GetSourceScreenshot</text>
+        <text x="332" y="80" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5" fill="#4d564b">11,5 / 12,2 ms</text>
+
+        <rect x="472" y="26" width="160" height="64" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+        <text x="552" y="50" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="600" fill="#1c231e">Détection</text>
+        <text x="552" y="66" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5" fill="#4d564b">VNDetectHumanBodyPose</text>
+        <text x="552" y="80" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5" fill="#4d564b">15,0 / 10,5 ms</text>
+
+        <rect x="692" y="26" width="176" height="64" rx="10" fill="#d9ece8" stroke="#1f6f6a"/>
+        <text x="780" y="50" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#14524d">Politique</text>
+        <text x="780" y="66" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5" fill="#14524d">core.policy.step — pure</text>
+        <text x="780" y="80" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5" fill="#14524d">0,1 / 0,0 ms</text>
+
+        <rect x="692" y="220" width="176" height="56" rx="10" fill="#f0dfc0" stroke="#a8650f" stroke-dasharray="4 3"/>
+        <text x="780" y="242" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="600" fill="#6e4409">Envoi</text>
+        <text x="780" y="258" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5" fill="#6e4409">thread dédié — 0,0 ms</text>
+
+        <rect x="252" y="220" width="160" height="56" rx="10" fill="#e2e6dc" stroke="#c7cdbd" opacity="0.9"/>
+        <text x="332" y="242" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="600" fill="#1c231e">Traits (option)</text>
+        <text x="332" y="258" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10.5" fill="#4d564b">--features — 24,0 ms</text>
+
+        <path d="M174,148 C210,148 210,58 252,58" fill="none" stroke="#4d564b" stroke-width="1.6" marker-end="url(#arrow)"/>
+        <path d="M412,58 L472,58" fill="none" stroke="#4d564b" stroke-width="1.6" marker-end="url(#arrow)"/>
+        <path d="M632,58 L692,58" fill="none" stroke="#4d564b" stroke-width="1.6" marker-end="url(#arrow)"/>
+        <path d="M780,90 L780,220" fill="none" stroke="#a8650f" stroke-width="1.6" marker-end="url(#arrow)"/>
+        <path d="M552,90 C552,248 472,248 412,248" fill="none" stroke="#4d564b" stroke-width="1.4" stroke-dasharray="3 3"/>
+        <path d="M692,248 C560,248 560,248 412,248" fill="none" stroke="#4d564b" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+        <path d="M692,240 C480,278 240,278 99,182" fill="none" stroke="#4d564b" stroke-width="1.6" marker-end="url(#arrow)"/>
+        <text x="440" y="300" text-anchor="middle" font-family="ui-monospace,monospace" font-size="11" fill="#4d564b">SetSceneItemTransform — request_batch (SERIAL_REALTIME, thread animateur)</text>
+      </svg>
+    </div>
+    <figcaption>La boucle entière, avec ses temps médians mesurés sur M3 (sans traits / avec traits). Un seul rectangle par bascule, pas un flux continu.</figcaption>
+  </figure>
+</div>
+
+<div class="layout">
+  <nav class="toc">
+    <ol>
+      <li><a href="#capture"><span class="num">1</span>Capture</a></li>
+      <li><a href="#temps"><span class="num">2</span>Temps par image</a></li>
+      <li><a href="#recadrage"><span class="num">3</span>De la détection au crop</a></li>
+      <li><a href="#decision"><span class="num">4</span>Le graphe de décision</a></li>
+      <li><a href="#concurrence"><span class="num">5</span>La concurrence, dans le temps</a></li>
+      <li><a href="#dock"><span class="num">6</span>Le tableau de bord</a></li>
+      <li><a href="#overlay"><span class="num">7</span>L'overlay</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="capture">
+      <h2><span class="num-badge">1</span>Comment l'image est captée en direct</h2>
+      <p>
+        La boucle n'ouvre jamais la caméra. Elle demande à OBS une capture de l'entrée
+        <code>RF Cam</code> par obs-websocket : <code>GetSourceScreenshot</code>, avec
+        <code>imageFormat: "jpg"</code> et <code>imageWidth: 640</code> — la hauteur est laissée à
+        OBS, qui préserve le rapport d'aspect de la source. La réponse est une
+        <strong>URI de données</strong>, <code>data:image/jpg;base64,…</code>, pas du base64 brut :
+        le préfixe doit être retiré avant décodage (<code>adapters/frames.py</code>).
+      </p>
+      <p>
+        Trois raisons motivent ce choix plutôt qu'ouvrir la caméra en parallèle, et elles
+        méritent d'être dites parce qu'elles ne sautent pas aux yeux : pas de contention avec OBS
+        sur l'accès au périphérique côté macOS ; le mécanisme se généralise sans changement à une
+        carte de capture ou un flux NDI ; et il lit exactement ce qu'OBS compose, pas une source
+        parallèle qui pourrait diverger. Le coût pour OBS est mesuré à
+        <strong>moins de 1 % d'un cœur</strong>.
+      </p>
+      <div class="callout trap">
+        <span class="label">Piège mesuré</span>
+        <p>
+          <strong>Ouvrir une caméra bloque le fil de rendu d'OBS pendant plusieurs secondes</strong>,
+          et c'est ce même fil qui sert <code>GetSourceScreenshot</code>. Mesuré : la médiane passe
+          de 14 ms à 1544 ms, et un appel a dépassé le délai de 5 s côté client. La boucle
+          <em>survit</em> à cet épisode (reconnexion, ré-résolution de la scène) ; elle ne
+          l'empêche pas.
+        </p>
+      </div>
+    </section>
+
+    <section id="temps">
+      <h2><span class="num-badge">2</span>Le temps par image</h2>
+      <p>
+        Mesuré sur Apple M3, source 1920×1080, image décodée en largeur 640, détecteur
+        <code>pose</code>. Deux régimes selon que <code>--features</code> est actif :
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Étape</th><th class="num">Sans --features</th><th class="num">Avec --features</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Capture (<code>GetSourceScreenshot</code>)</td><td class="num">11,5 ms</td><td class="num">12,2 ms</td></tr>
+            <tr><td>Détection (<code>VNDetectHumanBodyPose</code>)</td><td class="num">15,0 ms</td><td class="num">10,5 ms</td></tr>
+            <tr><td>Politique (cœur pur)</td><td class="num">0,1 ms</td><td class="num">0,0 ms</td></tr>
+            <tr><td>Envoi</td><td class="num">0,0 ms</td><td class="num">0,0 ms</td></tr>
+            <tr><td>Traits (visage, repères)</td><td class="num">—</td><td class="num">24,0 ms</td></tr>
+            <tr><td>Cadence atteinte</td><td class="num">28,9 it/s</td><td class="num">20,9 it/s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout core">
+        <span class="label">Ce que ça dit</span>
+        <p>
+          La politique est <strong>gratuite</strong> — 0,1 ms, de l'arithmétique pure sur une
+          poignée de flottants. Et l'envoi est à 0,0 ms non pas parce que le réseau ne coûte rien,
+          mais parce qu'il est <strong>remis à un thread d'arrière-plan</strong> qui le paie plus
+          tard. La couche <code>--features</code> coûte à elle seule autant que capture et
+          détection réunies, ce qui explique qu'elle soit désactivée par défaut.
+        </p>
+      </div>
+      <p>
+        Second point de repère : les quatre détecteurs disponibles se tiennent tous entre
+        <strong>6 et 9 ms</strong> sur des images identiques. Ce n'est donc pas le détecteur qui
+        décide de la cadence — c'est ailleurs, et notamment dans <code>--features</code>.
+      </p>
+    </section>
+
+    <section id="recadrage">
+      <h2><span class="num-badge">3</span>De la détection au recadrage OBS</h2>
+      <p>
+        La chaîne qui transforme une détection en crop OBS, et les informations qu'elle transporte :
+      </p>
+      <ul>
+        <li>Le détecteur renvoie des <code>Box</code>, <strong>normalisées en 0..1, origine en
+          haut à gauche</strong>, avec en option un <code>anchor</code> (milieu des yeux), un
+          <code>crown</code> (sommet du crâne estimé), une <code>crown_margin</code> et un
+          <code>bust</code> (sous-rectangle tête + torse).</li>
+        <li><code>to_source_rect()</code> les met à l'échelle en pixels source —
+          <strong>une seule fonction, délibérément</strong> : elle avait été écrite deux fois, et
+          les deux copies avaient fini par diverger et perdre silencieusement ces champs
+          optionnels, rendant tout un correctif de cadrage inerte.</li>
+        <li><code>core.policy.step(state, rects, now_ms, params)</code> est <strong>pure</strong> :
+          bibliothèque standard uniquement, aucune horloge lue à l'intérieur, l'état entre et
+          ressort en paramètre. Elle renvoie <code>(new_state, Command | None)</code>.</li>
+        <li>Une <code>Command</code> porte le rectangle cible, d'où partir, une durée, et en mode
+          split deux <code>cells</code>.</li>
+        <li><code>core.geometry.to_crop()</code> convertit un rectangle en quatre valeurs de crop OBS.</li>
+        <li>Le transport est <code>SetSceneItemTransform</code> par obs-websocket, groupé dans un
+          seul <code>request_batch</code> pour que visibilité et crop n'atterrissent jamais sur
+          des images différentes.</li>
+      </ul>
+
+      <div class="callout trap">
+        <span class="label">Piège mesuré</span>
+        <p>
+          <code>RequestBatch</code> en <code>executionType: SERIAL_FRAME</code> ne
+          <strong>cadence pas</strong>, malgré son nom : 60 transforms s'appliquent en
+          <strong>17 ms</strong>, ce qui se lit comme une coupe brutale. Le lissage est donc
+          cadencé par l'appelant lui-même — un thread dédié à 60 Hz, avec sa propre connexion
+          websocket — parce que le client est synchrone et que deux threads sur une seule
+          connexion interfoleraient leurs trames.
+        </p>
+      </div>
+
+      <p>
+        Autre point qui mérite d'être dit : <strong>pourquoi si peu de commandes</strong>. La
+        politique ne recadre pas en continu, mais sur évènement — zone morte, puis un délai
+        d'attente avant de s'engager, puis une transition adoucie dont la durée s'ajuste à la
+        distance parcourue. En pratique : 5 à 9 commandes sur 12 secondes.
+      </p>
+
+      <figure>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 860 300" role="img" aria-labelledby="threads-title threads-desc">
+            <title id="threads-title">Fils et connexions</title>
+            <desc id="threads-desc">
+              Trois fils indépendants : la boucle principale et sa connexion obs-websocket, le
+              thread animateur avec sa propre connexion à 60 Hz, et le serveur HTTP de contrôle.
+            </desc>
+            <rect x="20" y="20" width="820" height="70" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="38" y="44" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">Boucle principale</text>
+            <text x="38" y="62" font-family="ui-monospace,monospace" font-size="11" fill="#4d564b">capture → détection → politique → remise d'une Command</text>
+            <text x="38" y="78" font-family="ui-monospace,monospace" font-size="10.5" fill="#7c8577">connexion ObsWs A · cadence réglable (fps)</text>
+
+            <rect x="20" y="110" width="820" height="70" rx="10" fill="#d9ece8" stroke="#1f6f6a"/>
+            <text x="38" y="134" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#14524d">Animateur</text>
+            <text x="38" y="152" font-family="ui-monospace,monospace" font-size="11" fill="#14524d">tick à 60 Hz → interpole (lerp_rect, ease_in_out) → SetSceneItemTransform</text>
+            <text x="38" y="168" font-family="ui-monospace,monospace" font-size="10.5" fill="#1f6f6a">connexion ObsWs B, propre — thread séparé</text>
+
+            <rect x="20" y="200" width="820" height="60" rx="10" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="38" y="224" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#6e4409">Serveur de contrôle HTTP (démon)</text>
+            <text x="38" y="242" font-family="ui-monospace,monospace" font-size="10.5" fill="#6e4409">dock, overlay, /api/state, /api/params, /api/action — 127.0.0.1 uniquement</text>
+
+            <path d="M430,90 L430,110" fill="none" stroke="#4d564b" stroke-width="1.6" marker-end="url(#arrow)"/>
+            <text x="440" y="103" font-family="ui-monospace,monospace" font-size="10.5" fill="#4d564b">Command (cible, durée)</text>
+
+            <text x="700" y="284" text-anchor="end" font-family="ui-sans-serif,sans-serif" font-size="11.5" fill="#4d564b" font-style="italic">un client synchrone : deux fils sur une connexion interfoleraient leurs trames</text>
+          </svg>
+        </div>
+        <figcaption>Trois fils, trois rôles : détecter, animer, laisser régler — jamais deux qui partagent une connexion websocket.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 960 560" role="img" aria-labelledby="scene-title scene-desc">
+            <title id="scene-title">La scène OBS</title>
+            <desc id="scene-desc">
+              Un canevas 1920×1080 : la vue de contrôle, la sortie 9:16, les deux cellules
+              empilées du mode split au même endroit que la sortie, et l'overlay transparent
+              par-dessus la vue de contrôle. Une seule entrée « RF Cam » alimente ces quatre items.
+            </desc>
+            <rect x="20" y="20" width="920" height="520" fill="#e9ebe3" stroke="#c7cdbd" stroke-width="1.5"/>
+            <text x="34" y="44" font-family="ui-monospace,monospace" font-size="12" fill="#7c8577">canevas 1920 × 1080</text>
+
+            <rect x="50" y="222" width="600" height="337" fill="#e2e6dc" stroke="#1c231e" stroke-width="1.5"/>
+            <text x="60" y="242" font-family="ui-sans-serif,sans-serif" font-size="12.5" font-weight="600" fill="#1c231e">Vue de contrôle</text>
+            <text x="60" y="258" font-family="ui-monospace,monospace" font-size="10.5" fill="#4d564b">1200×675 à (60, 202)</text>
+
+            <rect x="50" y="222" width="600" height="337" fill="none" stroke="#a8650f" stroke-width="2" stroke-dasharray="6 4"/>
+            <text x="580" y="242" text-anchor="end" font-family="ui-sans-serif,sans-serif" font-size="11.5" font-weight="600" fill="#6e4409">RF Overlay</text>
+            <text x="580" y="258" text-anchor="end" font-family="ui-monospace,monospace" font-size="10" fill="#6e4409">browser source, transparente</text>
+
+            <rect x="680" y="50" width="260" height="220" fill="#d9ece8" stroke="#1f6f6a" stroke-width="1.5"/>
+            <text x="690" y="70" font-family="ui-sans-serif,sans-serif" font-size="12.5" font-weight="600" fill="#14524d">Sortie 9:16</text>
+            <text x="690" y="86" font-family="ui-monospace,monospace" font-size="10.5" fill="#14524d">540×960 à (1320, 60)</text>
+
+            <rect x="680" y="290" width="260" height="105" fill="#f0dfc0" stroke="#a8650f" stroke-width="1.5"/>
+            <text x="690" y="308" font-family="ui-sans-serif,sans-serif" font-size="11.5" font-weight="600" fill="#6e4409">cellule haut (split)</text>
+            <text x="690" y="323" font-family="ui-monospace,monospace" font-size="10" fill="#6e4409">540×480</text>
+            <rect x="680" y="395" width="260" height="105" fill="#f0dfc0" stroke="#a8650f" stroke-width="1.5"/>
+            <text x="690" y="413" font-family="ui-sans-serif,sans-serif" font-size="11.5" font-weight="600" fill="#6e4409">cellule bas (split)</text>
+            <text x="690" y="428" font-family="ui-monospace,monospace" font-size="10" fill="#6e4409">540×480</text>
+            <text x="690" y="518" font-family="ui-sans-serif,sans-serif" font-size="10.5" fill="#4d564b" font-style="italic">même emplacement que la sortie — l'un ou l'autre est visible, jamais les deux</text>
+
+            <circle cx="70" cy="130" r="26" fill="#1c231e"/>
+            <text x="70" y="126" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#eef0e9">RF</text>
+            <text x="70" y="138" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#eef0e9">Cam</text>
+            <text x="70" y="166" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="10.5" fill="#4d564b">une entrée</text>
+
+            <path d="M96,124 C300,90 500,140 640,180" fill="none" stroke="#1c231e" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <path d="M96,136 C200,240 300,300 350,300" fill="none" stroke="#1c231e" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <path d="M96,140 C240,340 500,380 680,340" fill="none" stroke="#1c231e" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <path d="M96,144 C240,420 500,450 680,447" fill="none" stroke="#1c231e" stroke-width="1.3" marker-end="url(#arrow)"/>
+          </svg>
+        </div>
+        <figcaption>
+          Une entrée <code>RF Cam</code>, quatre items de scène, quatre crops indépendants — la raison même du choix du
+          crop d'item de scène plutôt qu'un filtre <code>Crop/Pad</code>, qui vivrait sur la source et couperait
+          chaque item qui la consomme.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="decision">
+      <h2><span class="num-badge">4</span>Le graphe de décision</h2>
+      <p>
+        La figure précédente montre la boucle physique et ses temps ; celle-ci montre autre
+        chose — <strong>ce qui, à l'intérieur de <code>core.policy.step</code>, décide d'émettre
+        une commande ou de ne rien faire</strong>. Cinq des sorties possibles sont « rien émis »,
+        et c'est là que finit la grande majorité des images : une détection qui reste dans la
+        zone morte, un compteur qui démarre, une attente qui n'a pas encore expiré. Un lecteur
+        qui s'attend à une commande par image a le mauvais modèle mental.
+      </p>
+      <p>
+        Une branche fait exception : le <strong>crâne coupé</strong> (<code>crown</code>).
+        Contrairement à la zone morte, au délai d'engagement et à l'attente, qui sont des
+        préférences que la politique amortit, un cadre qui ampute la tête est une contrainte dure
+        — elle commite immédiatement, sans passer par aucun des amortisseurs, et le schéma la
+        dessine en rouge, traversant le graphe plutôt que rangée dans la file des autres cas.
+      </p>
+      <p>
+        Toute commande émise choisit ensuite entre deux sorties, et le critère n'est
+        <em>pas</em> la raison du recadrage : <code>_commit</code> ne coupe que sur un
+        <strong>changement de mode</strong>, sur <code>--snap</code>, ou si <code>ease_ms</code>
+        est nul. Un crâne coupé court-circuite les amortisseurs qui décident <em>quand</em> agir
+        — zone morte et délai d'engagement — mais <strong>son mouvement reste adouci</strong> ;
+        il est simplement rapide, la durée s'ajustant à la distance avec un plancher à 180 ms.
+        Tout le reste passe par le thread animateur. C'est ce qui produit, mesuré, <strong>5 à 9 commandes sur 12
+        secondes</strong> : la conséquence directe de tous ces exits silencieux.
+      </p>
+      <figure>
+        <div class="diagram-wrap native">
+          <svg viewBox="0 0 1040 1520" role="img" aria-labelledby="decision-title decision-desc">
+            <title id="decision-title">Le graphe de décision de core.policy.step</title>
+            <desc id="decision-desc">
+              De la capture au recadrage appliqué : la plupart des images ressortent sans aucune
+              commande, un crâne coupé commite immédiatement en traversant tous les amortisseurs,
+              et une commande émise coupe sur un changement de mode ou s'adoucit sur un simple
+              recadrage.
+            </desc>
+            <defs>
+              <marker id="arrow-warn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#a3402b"/>
+              </marker>
+            </defs>
+
+            <!-- legend -->
+            <g font-family="ui-monospace,monospace" font-size="10">
+              <rect x="792" y="16" width="232" height="104" rx="8" fill="#eef0e9" stroke="#c7cdbd"/>
+              <rect x="804" y="28" width="14" height="14" rx="3" fill="#d9ece8" stroke="#1f6f6a"/>
+              <text x="824" y="39" fill="#4d564b">cœur pur — core/policy.py</text>
+              <rect x="804" y="48" width="14" height="14" rx="3" fill="#e2e6dc" stroke="#c7cdbd"/>
+              <text x="824" y="59" fill="#4d564b">rien émis</text>
+              <rect x="804" y="68" width="14" height="14" rx="3" fill="#f3ddd3" stroke="#a3402b"/>
+              <text x="824" y="79" fill="#4d564b">crâne coupé — commit immédiat</text>
+              <rect x="804" y="88" width="14" height="14" rx="3" fill="#f0dfc0" stroke="#a8650f"/>
+              <text x="824" y="99" fill="#4d564b">vers OBS</text>
+            </g>
+
+            <!-- top chain: before the policy -->
+            <rect x="30" y="20" width="150" height="54" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="105" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">Capture</text>
+            <text x="105" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">frames.grab()</text>
+
+            <rect x="210" y="20" width="210" height="54" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="315" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">Détection</text>
+            <text x="315" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">list[Box] — 0..1, origine haut-gauche</text>
+
+            <rect x="450" y="20" width="250" height="54" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="575" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">to_source_rect()</text>
+            <text x="575" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">anchor, crown, crown_margin, bust</text>
+
+            <path d="M180,47 L210,47" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <path d="M420,47 L450,47" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <path d="M575,74 C575,95 585,102 590,116" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <!-- D0: busy gate -->
+            <polygon points="590,116 730,150 590,184 450,150" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.3"/>
+            <text x="590" y="146" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="12.5" font-weight="700" fill="#1c231e">Transition en cours ?</text>
+            <text x="590" y="162" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">busy_until_ms non atteint</text>
+
+            <rect x="780" y="122" width="230" height="56" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="895" y="146" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-style="italic" font-size="11.5" fill="#7c8577">Rien</text>
+            <text x="895" y="164" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="9.5" fill="#7c8577">les transitions ne s'empilent jamais</text>
+            <path d="M730,150 L780,150" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <text x="755" y="140" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#7c8577">oui</text>
+
+            <path d="M590,184 L590,224" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <text x="606" y="210" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">non</text>
+
+            <!-- core policy region -->
+            <rect x="20" y="200" width="1000" height="880" rx="16" fill="#d9ece8" fill-opacity="0.35" stroke="#1f6f6a" stroke-width="1.5" stroke-dasharray="6 4"/>
+            <text x="40" y="226" font-family="ui-monospace,monospace" font-size="11" font-weight="700" fill="#14524d">cœur pur — core/policy.py</text>
+
+            <!-- D1: split enabled -->
+            <polygon points="590,238 710,270 590,302 470,270" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.3"/>
+            <text x="590" y="266" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="12" font-weight="700" fill="#1c231e">Split activé ?</text>
+            <text x="590" y="281" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">params.split_enabled</text>
+
+            <path d="M470,270 C300,320 230,450 275,582" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <text x="330" y="330" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">non</text>
+
+            <path d="M590,302 L590,330" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <!-- B1: track update -->
+            <rect x="395" y="330" width="390" height="54" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="590" y="350" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="12.5" font-weight="700" fill="#1c231e">Suivi des deux sujets (tracks)</text>
+            <text x="590" y="366" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">appariés par centre x ; slot perdu gardé track_hold_ms (6 s)</text>
+
+            <path d="M590,384 L590,412" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <!-- D2: mode dispatch -->
+            <rect x="250" y="412" width="680" height="150" rx="10" fill="#eef0e9" stroke="#4d564b" stroke-width="1.3"/>
+            <text x="590" y="434" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="12" font-weight="700" fill="#1c231e">ready = 2 tracks vivants + cible dégénérée + écart &gt; split_min_gap</text>
+            <text x="590" y="456" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">mode = split, ready → reste en split</text>
+            <text x="590" y="476" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">mode = split, &lt; 2 tracks vivants → retour simple</text>
+            <text x="590" y="496" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">mode = split, non ready, split_exit_ms écoulé → retour simple</text>
+            <text x="590" y="516" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">mode = single, ready, split_enter_ms écoulé → entre en split</text>
+            <text x="590" y="536" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">sinon → simple, compteur inchangé</text>
+
+            <rect x="870" y="462" width="70" height="20" rx="10" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="905" y="476" text-anchor="middle" font-family="ui-monospace,monospace" font-size="8.5" font-weight="700" fill="#6e4409">COUPE</text>
+            <rect x="870" y="482" width="70" height="20" rx="10" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="905" y="496" text-anchor="middle" font-family="ui-monospace,monospace" font-size="8.5" font-weight="700" fill="#6e4409">COUPE</text>
+            <rect x="870" y="502" width="70" height="20" rx="10" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="905" y="516" text-anchor="middle" font-family="ui-monospace,monospace" font-size="8.5" font-weight="700" fill="#6e4409">COUPE</text>
+
+            <path d="M390,562 C320,570 290,576 275,582" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <text x="300" y="576" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">mode=single</text>
+            <path d="M790,562 C780,568 778,574 775,580" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <text x="850" y="576" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">mode=split</text>
+
+            <!-- Single panel -->
+            <rect x="60" y="560" width="430" height="540" rx="14" fill="none" stroke="#1f6f6a" stroke-width="1.3" stroke-dasharray="5 4"/>
+            <text x="80" y="585" font-family="ui-sans-serif,sans-serif" font-size="12" font-weight="700" fill="#14524d">Simple — _step_single</text>
+
+            <polygon points="275,582 365,610 275,638 185,610" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.2"/>
+            <text x="275" y="614" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11.5" font-weight="700" fill="#1c231e">Détections ?</text>
+
+            <path d="M185,610 C150,625 150,645 165,655" fill="none" stroke="#4d564b" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <text x="140" y="640" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+            <polygon points="275,642 385,670 275,698 165,670" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.2"/>
+            <text x="275" y="674" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="700" fill="#1c231e">hold_ms écoulé ?</text>
+
+            <path d="M165,670 C165,690 200,705 220,710" fill="none" stroke="#4d564b" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <text x="150" y="700" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+            <rect x="170" y="710" width="210" height="36" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="275" y="726" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-style="italic" font-size="10.5" fill="#7c8577">Maintien — rien émis</text>
+            <text x="275" y="740" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="9" fill="#7c8577">cible gardée</text>
+
+            <path d="M275,698 C275,725 275,745 275,770" fill="none" stroke="#4d564b" stroke-width="1.3" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+            <text x="290" y="730" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">oui (lost)</text>
+
+            <path d="M365,610 C400,625 400,645 380,655" fill="none" stroke="#4d564b" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <text x="395" y="640" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">oui</text>
+            <rect x="170" y="642" width="210" height="42" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="275" y="659" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">cible = union→expand→</text>
+            <text x="275" y="672" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">fit_ratio→clamp_to_source</text>
+
+            <path d="M275,684 L275,707" fill="none" stroke="#4d564b" stroke-width="1.3" marker-end="url(#arrow)"/>
+
+            <polygon points="275,707 375,735 275,763 175,735" fill="#f3ddd3" stroke="#a3402b" stroke-width="1.4"/>
+            <text x="275" y="739" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="700" fill="#7a2517">crown violé ?</text>
+
+            <path d="M175,735 C160,745 160,758 200,770" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="150" y="758" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+
+            <!-- crown escape, single -->
+            <path d="M375,735 C 550,780 520,1000 500,1080" fill="none" stroke="#a3402b" stroke-width="2.4" marker-end="url(#arrow-warn)"/>
+            <text x="470" y="900" font-family="ui-monospace,monospace" font-size="10" font-weight="700" fill="#7a2517">oui — commit immédiat, bypass zone morte + dwell</text>
+
+            <polygon points="275,770 395,800 275,830 155,800" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.2"/>
+            <text x="275" y="804" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="700" fill="#1c231e">Dans la zone morte ?</text>
+
+            <path d="M155,800 C130,812 130,828 165,838" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="120" y="826" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">oui</text>
+            <rect x="160" y="838" width="230" height="36" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="275" y="857" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-style="italic" font-size="10.5" fill="#7c8577">Rien — pending effacé</text>
+
+            <path d="M275,830 L275,842" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="290" y="838" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">non</text>
+
+            <polygon points="275,842 395,870 275,898 155,870" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.2"/>
+            <text x="275" y="874" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="10.5" font-weight="700" fill="#1c231e">Countdown démarré ?</text>
+
+            <path d="M155,870 C125,882 125,898 165,908" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="115" y="896" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+            <rect x="145" y="908" width="260" height="36" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="275" y="927" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-style="italic" font-size="10.5" fill="#7c8577">Rien — démarre le countdown</text>
+
+            <path d="M275,898 L275,912" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="290" y="908" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">oui</text>
+
+            <polygon points="275,912 385,940 275,968 165,940" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.2"/>
+            <text x="275" y="944" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="10.5" font-weight="700" fill="#1c231e">dwell_ms écoulé ?</text>
+
+            <path d="M165,940 C135,952 135,968 175,978" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="125" y="966" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+            <rect x="135" y="978" width="280" height="38" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="275" y="998" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-style="italic" font-size="10.5" fill="#7c8577">Rien — attend, horodatage gardé</text>
+
+            <path d="M275,968 L275,1012" fill="none" stroke="#4d564b" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <text x="290" y="994" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">oui</text>
+
+            <rect x="195" y="1012" width="160" height="42" rx="8" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="275" y="1030" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11.5" font-weight="700" fill="#6e4409">Commit</text>
+            <text x="275" y="1044" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">reason: commit / lost</text>
+
+            <!-- Split panel -->
+            <rect x="560" y="560" width="430" height="420" rx="14" fill="none" stroke="#1f6f6a" stroke-width="1.3" stroke-dasharray="5 4"/>
+            <text x="580" y="585" font-family="ui-sans-serif,sans-serif" font-size="12" font-weight="700" fill="#14524d">Split — _split_hold</text>
+
+            <polygon points="775,580 925,610 775,640 625,610" fill="#f3ddd3" stroke="#a3402b" stroke-width="1.4"/>
+            <text x="775" y="606" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="700" fill="#7a2517">crown violé sur une</text>
+            <text x="775" y="620" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="700" fill="#7a2517">cellule (0 ou 1) ?</text>
+
+            <!-- crown escape, split -->
+            <path d="M925,610 C 960,760 850,1000 700,1080" fill="none" stroke="#a3402b" stroke-width="2.4" marker-end="url(#arrow-warn)"/>
+            <text x="900" y="900" text-anchor="end" font-family="ui-monospace,monospace" font-size="10" font-weight="700" fill="#7a2517">oui — commit immédiat</text>
+
+            <path d="M625,610 C590,625 590,645 645,665" fill="none" stroke="#4d564b" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <text x="600" y="648" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+
+            <polygon points="775,652 905,680 775,708 645,680" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.2"/>
+            <text x="775" y="684" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11" font-weight="700" fill="#1c231e">Une cellule a bougé ?</text>
+
+            <path d="M645,680 C615,692 615,708 660,718" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="605" y="706" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+            <rect x="650" y="718" width="250" height="36" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="775" y="737" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-style="italic" font-size="10.5" fill="#7c8577">Rien — pending_cells effacé</text>
+
+            <path d="M775,708 L775,722" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="790" y="718" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">oui</text>
+
+            <polygon points="775,722 895,750 775,778 655,750" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.2"/>
+            <text x="775" y="754" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="10.5" font-weight="700" fill="#1c231e">Countdown démarré ?</text>
+
+            <path d="M655,750 C625,762 625,778 670,788" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="620" y="776" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+            <rect x="650" y="788" width="250" height="36" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="775" y="807" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-style="italic" font-size="10.5" fill="#7c8577">Rien — démarre le countdown</text>
+
+            <path d="M775,778 L775,792" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="790" y="788" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">oui</text>
+
+            <polygon points="775,792 885,820 775,848 665,820" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.2"/>
+            <text x="775" y="824" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="10.5" font-weight="700" fill="#1c231e">dwell_ms écoulé ?</text>
+
+            <path d="M665,820 C635,832 635,848 690,858" fill="none" stroke="#4d564b" stroke-width="1.2" marker-end="url(#arrow)"/>
+            <text x="630" y="846" font-family="ui-monospace,monospace" font-size="9" fill="#7c8577">non</text>
+            <rect x="670" y="858" width="210" height="36" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="775" y="877" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-style="italic" font-size="10.5" fill="#7c8577">Rien — attend</text>
+
+            <path d="M775,848 L775,890" fill="none" stroke="#4d564b" stroke-width="1.3" marker-end="url(#arrow)"/>
+            <text x="790" y="874" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">oui</text>
+
+            <rect x="695" y="890" width="160" height="42" rx="8" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="775" y="908" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11.5" font-weight="700" fill="#6e4409">Commit split</text>
+            <text x="775" y="922" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">reason: split</text>
+
+            <!-- convergence: crown node straddles the core-policy boundary -->
+            <rect x="460" y="1080" width="260" height="48" rx="10" fill="#f3ddd3" stroke="#a3402b" stroke-width="1.5"/>
+            <text x="590" y="1100" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="12" font-weight="700" fill="#7a2517">Commit immédiat</text>
+            <text x="590" y="1116" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#7a2517">reason: crown — un seul cas force ce raccourci</text>
+
+            <path d="M275,1054 C275,1090 380,1130 460,1155" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <path d="M775,932 C775,1030 800,1130 720,1155" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <path d="M590,1128 L590,1170" fill="none" stroke="#a3402b" stroke-width="1.8" marker-end="url(#arrow-warn)"/>
+
+            <!-- after the policy: Command -->
+            <rect x="370" y="1170" width="440" height="54" rx="10" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="590" y="1191" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#6e4409">Command</text>
+            <text x="590" y="1208" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#6e4409">target, from, duration_ms, reason, mode[, cells]</text>
+
+            <path d="M590,1224 L590,1270" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <polygon points="590,1270 700,1300 590,1330 480,1300" fill="#e2e6dc" stroke="#4d564b" stroke-width="1.3"/>
+            <text x="590" y="1296" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="12" font-weight="700" fill="#1c231e">duration_ms = 0 ?</text>
+            <text x="590" y="1312" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#4d564b">mode_cut_pending, snap, ou ease_ms ≤ 0</text>
+
+            <path d="M480,1300 C400,1320 390,1340 385,1360" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <text x="420" y="1330" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">oui</text>
+            <path d="M700,1300 C760,1320 770,1340 770,1360" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <text x="735" y="1330" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">non</text>
+
+            <rect x="280" y="1360" width="210" height="46" rx="8" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="385" y="1379" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="12" font-weight="700" fill="#6e4409">Coupe</text>
+            <text x="385" y="1394" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#6e4409">request_batch, immédiat</text>
+
+            <rect x="640" y="1360" width="260" height="46" rx="8" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="770" y="1379" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="12" font-weight="700" fill="#6e4409">Adouci</text>
+            <text x="770" y="1394" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#6e4409">thread animateur, 60 Hz</text>
+
+            <path d="M385,1406 C 420,1428 480,1438 520,1440" fill="none" stroke="#a8650f" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <path d="M770,1406 C 730,1428 660,1438 640,1440" fill="none" stroke="#a8650f" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <rect x="460" y="1440" width="260" height="54" rx="10" fill="#e2e6dc" stroke="#1c231e"/>
+            <text x="590" y="1461" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">OBS</text>
+            <text x="590" y="1477" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">SetSceneItemTransform — request_batch</text>
+          </svg>
+        </div>
+        <figcaption>
+          Cinq sorties « rien » pour deux « commit ». Le crâne coupé (rouge) traverse le graphe au
+          lieu de se ranger dans la file des amortisseurs ; un changement de mode ou un crâne coupé
+          coupent, un recadrage ordinaire s'adoucit.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="concurrence">
+      <h2><span class="num-badge">5</span>La concurrence, dans le temps</h2>
+      <p>
+        Les trois figures précédentes montrent des vues synchrones : une boîte se termine avant
+        que la suivante commence. Ce qu'elles laissent de côté, c'est ce qui fait tourner le
+        système — trois fils qui vivent en même temps, et l'ordre dans lequel leurs messages
+        traversent le réseau. Une itération reste sérielle et bloquante :
+        <code>GetSourceScreenshot</code> (11,5 ms), <code>detect</code> (15,0 ms),
+        <code>step</code> (0,1 ms). Mais dès que <code>step</code> renvoie une <code>Command</code>,
+        la boucle la remet au thread animateur et repart aussitôt — la remise mesure 0,0 ms, ce
+        qui rend la cadence de la boucle indépendante de la durée de la transition en cours.
+      </p>
+      <p>
+        Pendant ce temps, l'animateur tique toutes les 16,7 ms sur sa propre connexion et
+        interpole la trajectoire pour toute la durée de la transition : une transition de 320 ms,
+        c'est environ 19 tics. Ces tics et les captures de la boucle s'entrelacent dans la même
+        fenêtre, mais jamais sur la même connexion — le client obs-websocket est synchrone, et
+        deux fils qui la partageraient interfoleraient leurs trames. C'est le point le plus
+        important de la figure.
+      </p>
+      <p>
+        Un troisième fil répond au dock et à l'overlay, chacun sur son propre rythme (250 ms pour
+        le dock, 150 ms pour l'overlay, qui interroge <code>/api/state</code> et
+        <code>/api/features</code> séparément). Un changement de paramètre posté depuis le dock ne
+        modifie jamais l'itération en cours : il remplace la référence <code>PolicyParams</code>,
+        et seule l'itération suivante la lit. Mesuré : 28,9 itérations par seconde sans
+        <code>--features</code> (20,9 avec), un plancher protocole à 0,3 ms par requête, et 5 à 9
+        commandes émises sur 12 secondes — l'essentiel du temps, la boucle ne fait que regarder.
+      </p>
+      <figure>
+        <div class="diagram-wrap native">
+          <svg viewBox="0 0 1260 860" role="img" aria-labelledby="seq-title seq-desc">
+            <title id="seq-title">Séquence : la boucle, l'animateur et le serveur de contrôle</title>
+            <desc id="seq-desc">
+              Une itération sérielle et bloquante remet une Command au thread animateur en 0
+              milliseconde et repart aussitôt ; l'animateur tique toutes les 16,7 ms sur sa propre
+              connexion pendant que la boucle continue sur la sienne ; un troisième fil répond au
+              dock et à l'overlay sur leurs propres rythmes, et un changement de paramètre n'est lu
+              qu'au début de l'itération suivante.
+            </desc>
+            <defs>
+              <marker id="arrow-core" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#1f6f6a"/>
+              </marker>
+              <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#a8650f"/>
+              </marker>
+            </defs>
+
+            <!-- lifeline headers -->
+            <rect x="15" y="20" width="150" height="54" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="90" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">OBS</text>
+            <text x="90" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">serveur ws + fil de rendu</text>
+
+            <rect x="205" y="20" width="150" height="54" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="280" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">Boucle principale</text>
+            <text x="280" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">connexion ObsWs A</text>
+
+            <rect x="385" y="20" width="150" height="54" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="460" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">Détecteur</text>
+            <text x="460" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">Apple Vision, in-process</text>
+
+            <rect x="565" y="20" width="150" height="54" rx="10" fill="#d9ece8" stroke="#1f6f6a"/>
+            <text x="640" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#14524d">Thread animateur</text>
+            <text x="640" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#14524d">connexion ObsWs B — 60 Hz</text>
+
+            <rect x="745" y="20" width="150" height="54" rx="10" fill="#f0dfc0" stroke="#a8650f"/>
+            <text x="820" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#6e4409">Serveur de contrôle</text>
+            <text x="820" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#6e4409">démon HTTP, 127.0.0.1</text>
+
+            <rect x="925" y="20" width="150" height="54" rx="10" fill="#e2e6dc" stroke="#c7cdbd"/>
+            <text x="1000" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#1c231e">Dock</text>
+            <text x="1000" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">tableau de bord</text>
+
+            <rect x="1095" y="20" width="150" height="54" rx="10" fill="#f0dfc0" stroke="#a8650f" stroke-dasharray="4 3"/>
+            <text x="1170" y="44" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="13" font-weight="700" fill="#6e4409">Overlay</text>
+            <text x="1170" y="60" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#6e4409">browser source, dans OBS</text>
+
+            <!-- lifelines -->
+            <g stroke="#c7cdbd" stroke-width="1" stroke-dasharray="2 4">
+              <line x1="90" y1="74" x2="90" y2="830"/>
+              <line x1="280" y1="74" x2="280" y2="830"/>
+              <line x1="460" y1="74" x2="460" y2="830"/>
+              <line x1="640" y1="74" x2="640" y2="830"/>
+              <line x1="820" y1="74" x2="820" y2="830"/>
+              <line x1="1000" y1="74" x2="1000" y2="830"/>
+              <line x1="1170" y1="74" x2="1170" y2="830"/>
+            </g>
+
+            <!-- ===== zone A: one iteration, in full ===== -->
+            <text x="20" y="96" font-family="ui-monospace,monospace" font-size="11" font-weight="700" fill="#1c231e">une itération, en série et bloquante</text>
+
+            <path d="M276,112 L98,112" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <text x="190" y="104" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">GetSourceScreenshot(imageWidth: 640)</text>
+            <rect x="86" y="112" width="8" height="38" fill="#e2e6dc" stroke="#4d564b" stroke-width="1"/>
+            <rect x="276" y="112" width="8" height="38" fill="#e2e6dc" stroke="#4d564b" stroke-width="1"/>
+
+            <path d="M98,150 L276,150" fill="none" stroke="#4d564b" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+            <text x="190" y="163" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">jpeg (data URI) — 11,5 ms</text>
+
+            <path d="M284,185 L452,185" fill="none" stroke="#4d564b" stroke-width="1.4" marker-end="url(#arrow)"/>
+            <text x="368" y="178" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">detect(jpeg)</text>
+            <rect x="276" y="185" width="8" height="33" fill="#e2e6dc" stroke="#4d564b" stroke-width="1"/>
+            <rect x="456" y="185" width="8" height="33" fill="#e2e6dc" stroke="#4d564b" stroke-width="1"/>
+
+            <path d="M452,218 L284,218" fill="none" stroke="#4d564b" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+            <text x="368" y="231" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">list[Box] — 15,0 ms</text>
+
+            <rect x="230" y="238" width="100" height="34" rx="6" fill="#d9ece8" stroke="#1f6f6a"/>
+            <text x="280" y="251" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="10.5" font-weight="700" fill="#14524d">core.policy.step</text>
+            <text x="280" y="265" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#14524d">pur — 0,1 ms</text>
+
+            <path d="M284,286 L636,286" fill="none" stroke="#1f6f6a" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#arrow-core)"/>
+            <text x="460" y="279" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#14524d">Command(target, from, duration_ms=320) — remise, 0,0 ms</text>
+            <text x="460" y="300" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="9.5" fill="#7c8577">non bloquant — la boucle ne l'attend pas</text>
+
+            <text x="280" y="317" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="10" fill="#7c8577">→ itération suivante : elle démarre aussitôt, sans attendre la fin de la transition</text>
+
+            <!-- ===== zone B: overlap ===== -->
+            <text x="20" y="345" font-family="ui-monospace,monospace" font-size="11" font-weight="700" fill="#1c231e">pendant ce temps : la boucle continue, l'animateur tweene</text>
+
+            <rect x="210" y="358" width="490" height="330" rx="16" fill="#d9ece8" fill-opacity="0.25" stroke="#1f6f6a" stroke-width="1.4" stroke-dasharray="6 4"/>
+            <text x="455" y="378" text-anchor="middle" font-family="ui-sans-serif,sans-serif" font-size="11.5" font-weight="700" fill="#14524d">deux connexions ObsWs distinctes — jamais partagées entre fils</text>
+
+            <path d="M636,398 L98,398" fill="none" stroke="#1f6f6a" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#arrow-core)"/>
+            <text x="367" y="391" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#14524d">tick — SetSceneItemTransform (interpolé) — 16,7 ms après la remise</text>
+
+            <rect x="276" y="418" width="8" height="20" fill="#e2e6dc" stroke="#c7cdbd" stroke-width="1"/>
+            <text x="300" y="414" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">itération 2 — capture+détection+step ≈ 26,6 ms</text>
+            <text x="300" y="437" font-family="ui-monospace,monospace" font-style="italic" font-size="9" fill="#7c8577">rien émis — le cas le plus fréquent</text>
+
+            <path d="M644,432 C674,432 674,450 644,450" fill="none" stroke="#1f6f6a" stroke-width="1.2" marker-end="url(#arrow-core)"/>
+            <text x="682" y="445" font-family="ui-monospace,monospace" font-size="9" fill="#14524d">tick — 16,7 ms</text>
+
+            <path d="M644,466 C674,466 674,484 644,484" fill="none" stroke="#1f6f6a" stroke-width="1.2" marker-end="url(#arrow-core)"/>
+            <text x="682" y="479" font-family="ui-monospace,monospace" font-size="9" fill="#14524d">tick — 16,7 ms</text>
+
+            <rect x="276" y="470" width="8" height="20" fill="#e2e6dc" stroke="#c7cdbd" stroke-width="1"/>
+            <text x="300" y="466" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">itération 3 — rien émis</text>
+
+            <path d="M1160,428 L830,428" fill="none" stroke="#a8650f" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#arrow-accent)"/>
+            <text x="995" y="420" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">GET /api/state</text>
+            <path d="M1160,440 L830,440" fill="none" stroke="#a8650f" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#arrow-accent)"/>
+            <text x="995" y="452" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">GET /api/features</text>
+            <text x="995" y="407" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="9" fill="#7c8577">overlay — toutes les 150 ms, indépendamment</text>
+
+            <path d="M644,500 C674,500 674,518 644,518" fill="none" stroke="#1f6f6a" stroke-width="1.2" marker-end="url(#arrow-core)"/>
+            <text x="682" y="513" font-family="ui-monospace,monospace" font-size="9" fill="#14524d">tick — 16,7 ms</text>
+
+            <rect x="276" y="522" width="8" height="20" fill="#e2e6dc" stroke="#c7cdbd" stroke-width="1"/>
+            <text x="300" y="518" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">itération 4 — rien émis</text>
+
+            <path d="M990,552 L830,552" fill="none" stroke="#a8650f" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#arrow-accent)"/>
+            <text x="910" y="544" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">GET /api/state</text>
+            <text x="910" y="566" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="9" fill="#7c8577">dock — toutes les 250 ms</text>
+
+            <text x="280" y="600" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="10" fill="#7c8577">⋮ la boucle continue à ≈28,9 it/s, cadence inchangée par la transition en cours</text>
+            <text x="640" y="614" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="10" fill="#14524d">⋮ ≈19 tics au total sur ≈320 ms, la durée s'ajustant à la distance parcourue</text>
+
+            <path d="M1160,650 L830,650" fill="none" stroke="#a8650f" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#arrow-accent)"/>
+            <text x="995" y="642" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">GET /api/state</text>
+            <path d="M1160,662 L830,662" fill="none" stroke="#a8650f" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#arrow-accent)"/>
+            <text x="995" y="674" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">GET /api/features</text>
+
+            <path d="M636,660 L98,660" fill="none" stroke="#1f6f6a" stroke-width="1.4" marker-end="url(#arrow-core)"/>
+            <text x="367" y="653" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#14524d">tick final — t ≈ 320 ms</text>
+            <text x="367" y="673" text-anchor="middle" font-family="ui-monospace,monospace" font-style="italic" font-size="9" fill="#7c8577">cible atteinte, job effacé (Animator._job = None)</text>
+
+            <!-- ===== zone C: a parameter change ===== -->
+            <text x="20" y="712" font-family="ui-monospace,monospace" font-size="11" font-weight="700" fill="#1c231e">un paramètre change, jamais en cours d'itération</text>
+
+            <path d="M992,730 L828,730" fill="none" stroke="#a8650f" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+            <text x="910" y="723" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#6e4409">POST /api/params {ease_ms: 550}</text>
+            <rect x="816" y="730" width="8" height="34" fill="#f0dfc0" stroke="#a8650f" stroke-width="1"/>
+            <text x="838" y="742" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">bornes validées →</text>
+            <text x="838" y="754" font-family="ui-monospace,monospace" font-size="9" fill="#6e4409">dataclasses.replace() — PolicyParams figé</text>
+
+            <path d="M828,764 L992,764" fill="none" stroke="#a8650f" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arrow-accent)"/>
+            <text x="910" y="777" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#6e4409">200 — snapshot() reflète déjà le changement</text>
+
+            <path d="M812,796 C620,796 420,796 288,796" fill="none" stroke="#a8650f" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#arrow-accent)"/>
+            <text x="550" y="789" text-anchor="middle" font-family="ui-monospace,monospace" font-size="9.5" fill="#6e4409">get_controls() — verrou partagé, lu au tour suivant</text>
+
+            <rect x="276" y="800" width="8" height="20" fill="#e2e6dc" stroke="#c7cdbd" stroke-width="1"/>
+            <text x="300" y="816" font-family="ui-monospace,monospace" font-size="9.5" fill="#4d564b">itération k+1 — tourne avec le PolicyParams mis à jour</text>
+          </svg>
+        </div>
+        <figcaption>
+          Une itération, sérielle et mesurée ; un fil animateur qui tique à son rythme sur sa
+          propre connexion pendant que la boucle continue sur la sienne ; un troisième fil pour le
+          dock et l'overlay ; un paramètre qui n'atteint jamais qu'une itération qui n'a pas encore
+          commencé.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="dock">
+      <h2><span class="num-badge">6</span>Le tableau de bord HTML</h2>
+      <p>
+        <code>scripts/run.py</code> démarre un serveur HTTP de contrôle
+        (<code>adapters/control.py</code>) sur un thread démon, lié à
+        <strong>127.0.0.1 uniquement</strong>. Ses routes, vérifiées :
+      </p>
+      <ul class="endpoints">
+        <li><code class="verb">GET</code><span class="path">/, /dock.html</span><span class="desc">le tableau de bord</span></li>
+        <li><code class="verb">GET</code><span class="path">/overlay.html</span><span class="desc">l'overlay OBS</span></li>
+        <li><code class="verb">GET</code><span class="path">/api/state</span><span class="desc">l'état courant</span></li>
+        <li><code class="verb">GET</code><span class="path">/api/features</span><span class="desc">les traits extraits (503 si --features est éteint)</span></li>
+        <li><code class="verb">GET</code><span class="path">/api/frame.jpg</span><span class="desc">la dernière image capturée</span></li>
+        <li><code class="verb">POST</code><span class="path">/api/params</span><span class="desc">change les paramètres de politique</span></li>
+        <li><code class="verb">POST</code><span class="path">/api/action</span><span class="desc">pause, resume, recenter</span></li>
+      </ul>
+      <p>
+        <code>/api/state</code> expose <code>params</code>, <code>detector</code>,
+        <code>fps</code>, <code>upper_body</code>, <code>source_w</code>, <code>source_h</code>,
+        <code>iterations_per_s</code>, <code>detection_rate</code>, <code>crop</code>,
+        <code>mode</code>, <code>cells</code>, <code>boxes</code>, ainsi que les médianes de
+        latence par étape.
+      </p>
+      <p>
+        Un curseur du tableau de bord poste sur <code>/api/params</code> ; la boucle construit
+        alors un <strong>nouveau <code>PolicyParams</code> figé</strong> avec
+        <code>dataclasses.replace</code> et échange la référence — elle ne mute jamais en place,
+        ce qui rend un changement à chaud sûr contre une boucle qui lirait l'ancien objet en plein
+        milieu d'une itération. Changer <code>upper_body</code> reconstruit le détecteur ;
+        changer <code>fps</code> change la période de la boucle. <code>/api/action</code> porte
+        pause, reprise et recentrage.
+      </p>
+      <figure>
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 900 140" role="img" aria-labelledby="params-title params-desc">
+            <title id="params-title">Un changement de paramètre</title>
+            <desc id="params-desc">Du curseur du tableau de bord jusqu'à la prochaine itération de la boucle.</desc>
+            <g font-family="ui-sans-serif,sans-serif" font-size="12">
+              <rect x="10" y="35" width="140" height="60" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+              <text x="80" y="60" text-anchor="middle" font-weight="600" fill="#1c231e">Curseur</text>
+              <text x="80" y="76" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">tableau de bord</text>
+
+              <rect x="190" y="35" width="150" height="60" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+              <text x="265" y="60" text-anchor="middle" font-weight="600" fill="#1c231e">POST</text>
+              <text x="265" y="76" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">/api/params</text>
+
+              <rect x="380" y="35" width="150" height="60" rx="8" fill="#e2e6dc" stroke="#c7cdbd"/>
+              <text x="455" y="55" text-anchor="middle" font-weight="600" fill="#1c231e">Validation</text>
+              <text x="455" y="71" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">bornes par champ</text>
+              <text x="455" y="86" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#4d564b">400 sinon</text>
+
+              <rect x="570" y="35" width="170" height="60" rx="8" fill="#d9ece8" stroke="#1f6f6a"/>
+              <text x="655" y="60" text-anchor="middle" font-weight="700" fill="#14524d">dataclasses.replace</text>
+              <text x="655" y="76" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#14524d">nouveau PolicyParams</text>
+
+              <rect x="780" y="35" width="110" height="60" rx="8" fill="#f0dfc0" stroke="#a8650f"/>
+              <text x="835" y="60" text-anchor="middle" font-weight="600" fill="#6e4409">Itération</text>
+              <text x="835" y="76" text-anchor="middle" font-family="ui-monospace,monospace" font-size="10" fill="#6e4409">suivante</text>
+            </g>
+            <path d="M150,65 L190,65" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <path d="M340,65 L380,65" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <path d="M530,65 L570,65" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <path d="M740,65 L780,65" fill="none" stroke="#4d564b" stroke-width="1.5" marker-end="url(#arrow)"/>
+          </svg>
+        </div>
+        <figcaption>La référence est échangée, jamais mutée : la boucle qui lit <code>params</code> en cours d'itération ne voit jamais un objet à moitié modifié.</figcaption>
+      </figure>
+      <p>
+        Dans OBS, le tableau de bord s'ajoute par <strong>Docks → Custom Browser Docks</strong>,
+        pointé sur <code>http://127.0.0.1:4466/</code>.
+      </p>
+      <p>
+        Les réglages viennent aussi de <code>reframe.toml</code>, avec une précédence stricte :
+        <strong>ligne de commande &gt; fichier &gt; valeur par défaut intégrée</strong>. Une clé
+        inconnue ou d'un mauvais type est une erreur bloquante qui nomme la clé, jamais un
+        recours silencieux à une valeur par défaut.
+      </p>
+    </section>
+
+    <section id="overlay">
+      <h2><span class="num-badge">7</span>Comment l'overlay est généré</h2>
+      <p>
+        <code>scripts/overlay.html</code> est une <strong>Browser Source</strong> OBS,
+        transparente, 1200×675 à (60, 202) — posée exactement sur la vue de contrôle 16:9. Elle
+        est servie par le même serveur de contrôle, donc même origine, sans CORS.
+      </p>
+      <p>
+        Elle interroge <strong>deux routes indépendamment</strong>, et la raison compte :
+        <code>/api/state</code> qui échoue signifie que le serveur est injoignable, tandis que
+        <code>/api/features</code> qui renvoie 503 signifie seulement que <code>--features</code>
+        est éteint — les fusionner confondrait deux échecs de nature différente. Résultat : la
+        <strong>couche de cadrage se dessine même quand <code>--features</code> est éteint</strong>,
+        et la couche de détection est additive.
+      </p>
+      <p>
+        Elle dessine deux couches visuellement distinctes : les <strong>détections</strong>
+        (boîte du visage, yeux, pupilles, bouche, 19 repères corporels, ligne des épaules avec
+        son angle) et le <strong>cadrage</strong> (crop courant, ou les deux cellules du mode
+        split étiquetées, plus la zone morte et le mode, en texte). Cette distinction est
+        volontaire — les détections montrent ce que la machine <em>voit</em>, le cadre montre ce
+        qu'elle <em>décide</em>.
+      </p>
+    </section>
+
+  </main>
+</div>
+
+<footer>
+  docs/pipeline.html — sources : scripts/run.py, adapters/control.py, adapters/animator.py,
+  adapters/frames.py, core/policy.py, core/geometry.py, adapters/detector.py, scripts/layout.py,
+  scripts/setup_scene.py, scripts/overlay.html
+</footer>

@@ -63,6 +63,14 @@ derrière elle. L'instrument existe désormais ; les mesures, non.
       attendre six secondes pour rien. L'information existe : une boîte qui
       dérive vers un bord avant de disparaître n'est pas une boîte qui s'éteint
       au milieu du cadre.
+- [ ] **Le message d'erreur sur source 0x0 envoie au mauvais endroit.** Quand la
+      source média est à l'arrêt (`OBS_MEDIA_STATE_STOPPED`), elle renvoie 0x0 et
+      `resolve_scene` conclut « résolution jamais renégociée après reconstruction,
+      relancez `scripts.run` ». Relancer la boucle n'y change rien : c'est la
+      source qu'il faut redémarrer
+      (`TriggerMediaInputAction` / `OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART`).
+      Interroger `GetMediaInputStatus` avant de conclure, et dire le vrai remède —
+      ou relancer la source soi-même.
 - [ ] **Une reconstruction de scène qui change la *résolution* de la source**
       laisse `PolicyParams` et `PolicyState` sur l'ancienne. Le cas des
       identifiants est traité (revérification toutes les 2 s) ; celui de la
