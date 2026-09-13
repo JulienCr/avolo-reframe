@@ -39,19 +39,27 @@
   "commandes": 355,
   "images_2_corps_ou_plus": 3822,
   "part_2_corps": 0.4563,
-  "classement_du_centre": {
-    "between": 3415,
-    "on_subject": 4626,
-    "overlap": 288,
-    "n/a": 47
-  },
-  "largeur_union_2corps_px": {
-    "mediane": 1426.0,
-    "p90": 1597.0
-  },
   "degenerate": 0.8995,
+  "degenerate_harmful": 0.1646,
+  "degenerate_benign": 0.7349,
+  "largeur_union_2corps_px": {
+    "mediane": 1425.9,
+    "p90": 1596.9
+  },
+  "classement_du_centre": {
+    "between": 253,
+    "on_subject": 92,
+    "elsewhere": 13,
+    "overlap": 114
+  },
+  "classement_split_cellules": {
+    "images_split": 4537,
+    "cellule_sur_sujet": 7552,
+    "cellule_ailleurs": 1492,
+    "cellule_sans_detection": 30
+  },
   "crane_coupe": {
-    "cellules_verifiees": 7598,
+    "cellules_verifiees": 7600,
     "taux_coupe": 0.0,
     "marge_mediane_px": 78.7,
     "marge_p10_px": 28.6,

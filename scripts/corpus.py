@@ -17,9 +17,9 @@ from adapters.detector import Detector, to_source_rect
 from adapters.video import VideoFrames
 from core.geometry import Rect, clamp_to_source, expand, fit_ratio, union
 from core.policy import PolicyParams, PolicyState, initial_state, step
-from scripts.layout import RATIO
 
 _PLACEMENT_KEYS = {"between": "n_between", "on_subject": "n_on_subject", "elsewhere": "n_elsewhere", "overlap": "n_overlap"}
+_SPLIT_KEYS = {"on_subject": "n_split_cell_on_subject", "elsewhere": "n_split_cell_elsewhere", "n/a": "n_split_cell_na"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,6 +41,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ease-ms", type=float, default=defaults.ease_ms)
     parser.add_argument("--snap", action="store_true")
     parser.add_argument("--hold-ms", type=float, default=defaults.hold_ms)
+    parser.add_argument("--ratio", type=float, default=defaults.ratio)
+    parser.add_argument(
+        "--split", action=argparse.BooleanOptionalAction, default=defaults.split_enabled, dest="split_enabled"
+    )
+    parser.add_argument("--split-min-gap", type=float, default=defaults.split_min_gap)
+    parser.add_argument("--split-enter-ms", type=float, default=defaults.split_enter_ms)
+    parser.add_argument("--split-exit-ms", type=float, default=defaults.split_exit_ms)
+    parser.add_argument("--track-hold-ms", type=float, default=defaults.track_hold_ms)
+    parser.add_argument("--eye-line", type=float, default=defaults.eye_line)
+    parser.add_argument("--max-zoom", type=float, default=defaults.max_zoom)
+    parser.add_argument("--zoom-dead-zone", type=float, default=defaults.zoom_dead_zone)
     return parser.parse_args()
 
 
@@ -114,6 +125,19 @@ def crop_vs_subjects(boxes: list[dict], crop_cx: float) -> str:
     on_left = left["x"] <= crop_cx <= left["x"] + left["w"]
     on_right = right["x"] <= crop_cx <= right["x"] + right["w"]
     return "on_subject" if (on_left or on_right) else "elsewhere"
+
+
+def cell_placement(cell: Rect, boxes: list[dict]) -> str:
+    """Split mode: classifies one applied cell against the box nearest its
+    centre. state.cells only refreshes on commit (dead zone, dwell), so this
+    checks the cell actually held this frame, not a tautology of its own fit.
+    """
+    if not boxes:
+        return "n/a"
+    nearest = min(boxes, key=lambda b: abs((b["x"] + b["w"] / 2) - cell.cx))
+    nx, ny = nearest["x"] + nearest["w"] / 2, nearest["y"] + nearest["h"] / 2
+    on = cell.x <= nx <= cell.x + cell.w and cell.y <= ny <= cell.y + cell.h
+    return "on_subject" if on else "elsewhere"
 
 
 def _crown_check(crown: float, applied_top: float) -> dict:
@@ -195,19 +219,34 @@ def print_summary(
         harmful_rate = 0.0
         print("Cible figée au maximum (degenerate) : n/a (aucune détection).")
 
-    n_multibody = degeneracy["n_multibody"]
-    if n_multibody:
-        between_pct = 100.0 * degeneracy["n_between"] / n_multibody
-        on_subject_pct = 100.0 * degeneracy["n_on_subject"] / n_multibody
-        elsewhere_pct = 100.0 * degeneracy["n_elsewhere"] / n_multibody
-        overlap_pct = 100.0 * degeneracy["n_overlap"] / n_multibody
+    n_multibody_total = degeneracy["n_multibody_total"]
+    if n_multibody_total:
+        print(f"{n_multibody_total} images à 2+ corps détectés ({100.0 * n_multibody_total / n_frames:.1f}%).")
+    else:
+        print("Images à 2+ corps détectés : n/a (aucune).")
+
+    n_multibody_single = degeneracy["n_multibody_single"]
+    if n_multibody_single:
+        between_pct = 100.0 * degeneracy["n_between"] / n_multibody_single
+        on_subject_pct = 100.0 * degeneracy["n_on_subject"] / n_multibody_single
+        elsewhere_pct = 100.0 * degeneracy["n_elsewhere"] / n_multibody_single
+        overlap_pct = 100.0 * degeneracy["n_overlap"] / n_multibody_single
         print(
-            f"Sur {n_multibody} images à 2+ corps détectés : centre entre les sujets {between_pct:.1f}%, "
+            f"  dont {n_multibody_single} en mode simple : centre entre les sujets {between_pct:.1f}%, "
             f"sur un sujet {on_subject_pct:.1f}%, ailleurs {elsewhere_pct:.1f}%, "
             f"boîtes en chevauchement {overlap_pct:.1f}%."
         )
-    else:
-        print("Images à 2+ corps détectés : n/a (aucune).")
+
+    n_split = degeneracy["n_split"]
+    if n_split:
+        n_cells = 2 * n_split
+        on_pct = 100.0 * degeneracy["n_split_cell_on_subject"] / n_cells
+        else_pct = 100.0 * degeneracy["n_split_cell_elsewhere"] / n_cells
+        na_pct = 100.0 * degeneracy["n_split_cell_na"] / n_cells
+        print(
+            f"  dont {n_split} en mode split ({n_cells} cellules) : cadrent leur sujet {on_pct:.1f}%, "
+            f"ratent {else_pct:.1f}%, sans détection {na_pct:.1f}%."
+        )
 
     if n_detections and harmful_rate > 50.0:
         print(
@@ -226,21 +265,44 @@ def print_summary(
         print("Crâne coupé : n/a (détecteur sans estimation de crâne, ou aucun sujet exploitable).")
 
 
-def summary_dict(header: dict, n_frames: int, n_detections: int, moves: list[dict], degeneracy: dict, head: dict) -> dict:
+def summary_dict(
+    header: dict, n_frames: int, n_detections: int, moves: list[dict], degeneracy: dict, head: dict, union_widths_2corps: list[float]
+) -> dict:
     """The core of what print_summary prints, as JSON. tests/corpus/README.md
-    documents how classement_du_centre and largeur_union_2corps_px (from
-    tests/corpus/tools/analyze_two_subjects.py against the trace) fold in.
+    documents classement_du_centre (mode simple) and classement_split_cellules
+    (mode split), each classified against the frame actually applied.
     """
-    n_multibody = degeneracy["n_multibody"]
+    n_multibody_total = degeneracy["n_multibody_total"]
     result = {
         "source": header,
         "images": n_frames,
         "taux_detection": round(n_detections / n_frames, 4) if n_frames else 0.0,
         "commandes": len(moves),
-        "images_2_corps_ou_plus": n_multibody,
-        "part_2_corps": round(n_multibody / n_frames, 4) if n_frames else 0.0,
+        "images_2_corps_ou_plus": n_multibody_total,
+        "part_2_corps": round(n_multibody_total / n_frames, 4) if n_frames else 0.0,
         "degenerate": round(degeneracy["n_degenerate"] / n_detections, 4) if n_detections else 0.0,
+        "degenerate_harmful": round(degeneracy["n_degenerate_harmful"] / n_detections, 4) if n_detections else 0.0,
+        "degenerate_benign": round(degeneracy["n_degenerate_benign"] / n_detections, 4) if n_detections else 0.0,
     }
+    if union_widths_2corps:
+        result["largeur_union_2corps_px"] = {
+            "mediane": round(percentile(union_widths_2corps, 0.5), 1),
+            "p90": round(percentile(union_widths_2corps, 0.9), 1),
+        }
+    if degeneracy["n_multibody_single"]:
+        result["classement_du_centre"] = {
+            "between": degeneracy["n_between"],
+            "on_subject": degeneracy["n_on_subject"],
+            "elsewhere": degeneracy["n_elsewhere"],
+            "overlap": degeneracy["n_overlap"],
+        }
+    if degeneracy["n_split"]:
+        result["classement_split_cellules"] = {
+            "images_split": degeneracy["n_split"],
+            "cellule_sur_sujet": degeneracy["n_split_cell_on_subject"],
+            "cellule_ailleurs": degeneracy["n_split_cell_elsewhere"],
+            "cellule_sans_detection": degeneracy["n_split_cell_na"],
+        }
     if head["n_checked"]:
         result["crane_coupe"] = {
             "cellules_verifiees": head["n_checked"],
@@ -261,7 +323,7 @@ def main() -> None:
     p = PolicyParams(
         source_w=probe["width"],
         source_h=probe["height"],
-        ratio=RATIO,
+        ratio=args.ratio,
         margin=args.margin,
         min_crop_h=args.min_crop_h,
         dead_zone=args.dead_zone,
@@ -269,6 +331,14 @@ def main() -> None:
         ease_ms=args.ease_ms,
         snap=args.snap,
         hold_ms=args.hold_ms,
+        split_enabled=args.split_enabled,
+        split_min_gap=args.split_min_gap,
+        split_enter_ms=args.split_enter_ms,
+        split_exit_ms=args.split_exit_ms,
+        track_hold_ms=args.track_hold_ms,
+        eye_line=args.eye_line,
+        max_zoom=args.max_zoom,
+        zoom_dead_zone=args.zoom_dead_zone,
     )
     state = initial_state(p)
 
@@ -291,9 +361,12 @@ def main() -> None:
     moves: list[dict] = []
     degeneracy = {
         "n_degenerate": 0, "n_degenerate_benign": 0, "n_degenerate_harmful": 0,
-        "n_multibody": 0, "n_between": 0, "n_on_subject": 0, "n_elsewhere": 0, "n_overlap": 0,
+        "n_multibody_total": 0, "n_multibody_single": 0,
+        "n_between": 0, "n_on_subject": 0, "n_elsewhere": 0, "n_overlap": 0,
+        "n_split": 0, "n_split_cell_on_subject": 0, "n_split_cell_elsewhere": 0, "n_split_cell_na": 0,
     }
     head: dict = {"n_checked": 0, "n_cut": 0, "n_unreachable": 0, "margins": []}
+    union_widths_2corps: list[float] = []
 
     with open(args.out, "w") as out:
         out.write(json.dumps(header) + "\n")
@@ -311,7 +384,13 @@ def main() -> None:
                 move_px = math.hypot(cmd.target.cx - prev_current.cx, cmd.target.cy - prev_current.cy)
                 moves.append({"pts_ms": frame.pts_ms, "move_px": move_px})
 
-            placement = crop_vs_subjects(box_list, target.cx) if target is not None else "n/a"
+            # Placement is classified against what got applied this frame --
+            # state.current or state.cells -- never the raw single-mode target,
+            # which a split frame never actually shows on screen.
+            in_split = state.mode == "split" and state.cells is not None
+            placement = [cell_placement(cell, box_list) for cell in state.cells] if in_split else crop_vs_subjects(
+                box_list, state.current.cx
+            )
             checks = crown_checks(state, frame.pts_ms, rects)
 
             entry = {
@@ -331,12 +410,25 @@ def main() -> None:
 
             n_frames += 1
             n_detections += 1 if boxes else 0
+            if len(boxes) >= 2:
+                degeneracy["n_multibody_total"] += 1
+                union_widths_2corps.append(merged.w)
+
+            if in_split:
+                degeneracy["n_split"] += 1
+                for cell_verdict in placement:
+                    degeneracy[_SPLIT_KEYS[cell_verdict]] += 1
+                harmful = any(v == "elsewhere" for v in placement)
+            else:
+                if len(boxes) >= 2:
+                    degeneracy["n_multibody_single"] += 1
+                    degeneracy[_PLACEMENT_KEYS[placement]] += 1
+                harmful = placement == "between"
+
             if degenerate:
                 degeneracy["n_degenerate"] += 1
-                degeneracy["n_degenerate_harmful" if placement == "between" else "n_degenerate_benign"] += 1
-            if len(boxes) >= 2:
-                degeneracy["n_multibody"] += 1
-                degeneracy[_PLACEMENT_KEYS[placement]] += 1
+                degeneracy["n_degenerate_harmful" if harmful else "n_degenerate_benign"] += 1
+
             for check in checks:
                 if check["unreachable"]:
                     head["n_unreachable"] += 1
@@ -348,7 +440,7 @@ def main() -> None:
     print_summary(n_frames, n_detections, moves, detector.name, degeneracy, head)
     if args.summary_json:
         with open(args.summary_json, "w") as f:
-            json.dump(summary_dict(header, n_frames, n_detections, moves, degeneracy, head), f, indent=2)
+            json.dump(summary_dict(header, n_frames, n_detections, moves, degeneracy, head, union_widths_2corps), f, indent=2)
             f.write("\n")
 
 

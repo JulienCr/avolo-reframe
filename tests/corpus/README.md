@@ -14,6 +14,7 @@ Récupéré du scratchpad de session le 12 septembre 2026 — il aurait été ef
 | `traces/` | les traces JSONL brutes, ~5,7 Mo pièce | non |
 | `frames/` | 39 images échantillonnées de l'extrait, 1 Mo | oui |
 | `tools/` | les scripts d'analyse et de vérification | oui |
+| `cuts/` | repérage des bascules de plan (candidats, seuils, planches contact) | oui |
 
 ## `reference-summary.json`
 
@@ -23,15 +24,36 @@ un résumé qui ne dit pas ce qui l'a produit ne vaut rien trois semaines plus t
 
 Chiffres au 13 septembre 2026, **détecteur `pose`** (le précédent, `vision-upper`,
 ne fournit aucune estimation de crâne) : 8 376 images, détection 99,4 %,
-355 commandes, **45,6 % d'images à deux corps ou plus**, dont 3 415 cadrées
-entre les sujets et 4 626 sur un sujet.
+355 commandes, **45,6 % d'images à deux corps ou plus**.
+
+**Corrigé le 13 septembre 2026 : `classement_du_centre` jugeait le mauvais
+rectangle.** Il classait le centre de la *cible brute calculée en mode simple*
+contre les sujets, y compris sur les 4 537 images où la politique était
+réellement en **mode split** (54 % des images) — donc pas ce qui s'affichait.
+Comme le split se déclenche justement quand cette cible brute est dégénérée,
+la quasi-totalité de ces images comptait comme « cadrée entre les sujets »,
+alors que le split les avait résolues. `classement_du_centre` ne porte
+maintenant que sur les images en **mode simple** (472, dont 253 entre les
+sujets) ; un nouveau `classement_split_cellules` juge chaque **cellule
+appliquée** contre le sujet le plus proche de son centre (9 074 cellules sur
+4 537 images, 83,2 % cadrent leur sujet). `degenerate_harmful` tombe en
+conséquence de 41,0 % à 16,5 % des images détectées : ce n'est pas la
+politique qui a changé, c'est la mesure qui portait sur le mauvais rectangle.
 
 Nouveau : **`crane_coupe`**, la mesure qui aurait attrapé le défaut de coupe de
 tête du 12-13 septembre — sur le cadre **appliqué**, pas la cible calculée, qui
 peut en diverger pendant des dizaines d'images tant que la zone morte ne
-recommet pas. 7 598 cellules vérifiées, **0 % coupées**, marge médiane +79px,
+recommet pas. 7 600 cellules vérifiées, **0 % coupées**, marge médiane +79px,
 p10 +29px ; 978 cas exclus où le crâne estimé tombe lui-même hors de la source
 (seule exception acceptée, comptée à part, jamais dans le taux de coupe).
+
+La référence commitée annonçait 7 598. Ce n'est pas une dérive d'environnement :
+ce chiffre vient de la trace du 13 septembre à 00:47, qui porte `state.mode` nul
+sur ses 8 376 images, donc produite par un cœur où le champ n'existait pas encore.
+Elle est antérieure au commit `0b68bec`, qui l'introduit. **La référence était
+périmée en arrivant dans le dépôt, et rien ne la comparait à un rejeu.** Vérifié
+le 13 septembre 2026 : deux rejeux consécutifs restent identiques au bit près,
+agrégat et trace, donc le déterminisme promis plus haut tient.
 
 ## `traces/`
 
