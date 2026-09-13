@@ -1,5 +1,14 @@
 """Tests for PoseDetector's crown/bust math -- pure joint arithmetic, no Vision calls."""
 
+import sys
+
+import pytest
+
+if sys.platform != "darwin":
+    # skipif alone can't help here: the import below fails at collection time,
+    # before any test-level marker is evaluated.
+    pytest.skip("adapters.detect_pose imports Apple's Vision framework", allow_module_level=True)
+
 from adapters.detect_pose import PoseDetector
 
 

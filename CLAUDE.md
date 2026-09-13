@@ -37,6 +37,8 @@ uv run python -m scripts.corpus tests/fixtures/lab-avolo-58m22-70m00.mp4 \
 
 **La source par défaut est la vidéo de test, pas la caméra.** Une caméra rend chaque exécution différente, donc deux mesures ne sont plus comparables. `--camera` pour rebasculer.
 
+`ffmpeg` et `ffprobe` sont requis dans le `PATH` (dépendances externes, non gérées par `uv`). Sur Windows, le détecteur devient l'extra `yolo` (`uv sync --extra yolo`), les pyobjc-framework-* étant réservés à macOS.
+
 `--upper-body` bascule le détecteur en mode tête+torse. **Plus robuste, pas indispensable** : 1,1 % d'images sans détection contre 8,3 % sur le plan large le plus difficile de l'extrait. `VNDetectHumanRectangles` n'exige pas de voir les jambes. Il cadre en revanche le buste seul, donc faux pour un comédien debout qu'on veut en entier.
 
 **Les quatre détecteurs se tiennent entre 6 et 9 ms** — ce n'est pas là que se joue la cadence. Ne comparer que des mesures prises sur les **mêmes images, dans le même processus, à la suite** : deux relevés pris à des moments différents ont déjà produit deux conclusions fausses dans ce dépôt.

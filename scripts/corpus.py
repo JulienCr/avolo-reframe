@@ -12,7 +12,6 @@ import json
 import math
 import statistics
 
-from adapters.detect_vision import VisionDetector
 from adapters.detector import Detector, to_source_rect
 from adapters.video import VideoFrames
 from core.geometry import Rect, clamp_to_source, expand, fit_ratio, union
@@ -60,6 +59,8 @@ def build_detector(name: str, upper_body: bool) -> Detector:
         from adapters.detect_pose import PoseDetector
 
         return PoseDetector(bust=upper_body)
+    from adapters.detect_vision import VisionDetector
+
     return VisionDetector(upper_body=upper_body)
 
 
