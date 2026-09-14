@@ -50,7 +50,7 @@ p10 +29px ; 978 cas exclus où le crâne estimé tombe lui-même hors de la sour
 La référence commitée annonçait 7 598. Ce n'est pas une dérive d'environnement :
 ce chiffre vient de la trace du 13 septembre à 00:47, qui porte `state.mode` nul
 sur ses 8 376 images, donc produite par un cœur où le champ n'existait pas encore.
-Elle est antérieure au commit `0b68bec`, qui l'introduit. **La référence était
+Elle est antérieure au commit `0e431f8`, qui l'introduit. **La référence était
 périmée en arrivant dans le dépôt, et rien ne la comparait à un rejeu.** Vérifié
 le 13 septembre 2026 : deux rejeux consécutifs restent identiques au bit près,
 agrégat et trace, donc le déterminisme promis plus haut tient.

@@ -92,7 +92,7 @@ La politique causale reste ce qui a le moins de chiffres derrière elle. L'instr
 
 **Tout changement de `core/` se mesure contre le corpus, pas seulement contre `pytest`.** Rejeu déterministe hors OBS, 75 s pour 698 s de vidéo, puis comparaison de l'agrégat produit à [`tests/corpus/reference-summary.json`](tests/corpus/README.md). Un balayage de paramètres est donc praticable.
 
-**Régénérer la référence dans le commit qui change le cœur, jamais après.** Elle est arrivée périmée dans le dépôt le 13 septembre 2026, produite par un cœur antérieur à `0b68bec` : personne ne l'a vu, parce que rien ne la comparait à un rejeu. La démonstration est dans [`tests/corpus/README.md`](tests/corpus/README.md).
+**Régénérer la référence dans le commit qui change le cœur, jamais après.** Elle est arrivée périmée dans le dépôt le 13 septembre 2026, produite par un cœur antérieur à `0e431f8` : personne ne l'a vu, parce que rien ne la comparait à un rejeu. La démonstration est dans [`tests/corpus/README.md`](tests/corpus/README.md).
 
 **Le rejeu est déterministe**, vérifié le 13 septembre 2026 : deux rejeux consécutifs donnent le même agrégat et la même trace, au bit près. Tout écart est donc un vrai écart, jamais du bruit de détection.
 
