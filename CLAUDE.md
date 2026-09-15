@@ -33,6 +33,7 @@ make probe             # go/no-go + latences, sort 0 si tout passe
 make setup             # (re)construit la scène sur la vidéo de test
 make run ARGS="--upper-body"   # la boucle
 make corpus            # rejeu déterministe hors OBS ; voir tests/corpus/README.md
+make replay            # rejoue TRACE en quelques secondes, sans décodage ni détection
 ```
 
 Formes `uv run` sous-jacentes, pour deux commandes clés :
@@ -102,7 +103,7 @@ Ne rien affirmer sur la cadence de détection, la latence ou un changement de mo
 
 **Écarter systématiquement la première mesure.** Le démarrage à froid a produit deux conclusions fausses dans ce dépôt : 233 ms sur un `GetSourceScreenshot` qui en fait 5, et 115 ms sur une détection qui en fait 16. Une conclusion sur n=1 est une conclusion sur du bruit.
 
-La politique causale, elle, n'a toujours **presque aucun chiffre derrière elle** : `--log` produit la trace, et le corpus de cas de contrôle reste à bâtir sur le modèle de `scripts/framing/cases.ts` d'`avolo-shorts`.
+Le corpus mesure maintenant les bascules split et le crâne coupé sur le cadre **appliqué** (`scripts.corpus --from-trace`, chiffres dans `tests/corpus/README.md`). Il manque encore un extrait avec bascules de plan annotées.
 
 ## Langue
 

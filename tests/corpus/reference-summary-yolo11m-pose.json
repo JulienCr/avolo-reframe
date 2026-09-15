@@ -21,14 +21,14 @@
       "split_enabled": true,
       "split_min_gap": 0.15,
       "split_enter_ms": 600.0,
-      "split_exit_ms": 3000.0,
-      "track_hold_ms": 6000.0,
+      "split_exit_ms": 500.0,
+      "track_hold_ms": 500.0,
       "eye_line": 0.33,
       "max_zoom": 1.5,
       "zoom_dead_zone": 0.25
     },
     "detector": "yolo-yolo11m-pose",
-    "yolo_model": "models\\yolo11m-pose.pt",
+    "yolo_model": "D:\\dev\\avolo-reframe\\models\\yolo11m-pose.pt",
     "yolo_imgsz": 640,
     "yolo_conf": 0.25,
     "fps": 12.0,
@@ -39,15 +39,44 @@
   },
   "images": 8376,
   "taux_detection": 0.997,
-  "commandes": 386,
+  "commandes": 373,
   "images_2_corps_ou_plus": 4084,
   "part_2_corps": 0.4876,
   "degenerate": 0.8951,
   "crane_coupe": {
-    "cellules_verifiees": 8338,
-    "taux_coupe": 0.0,
-    "marge_mediane_px": 79.3,
-    "marge_p10_px": 27.9,
-    "crane_hors_source_exclu": 971
+    "cellules_verifiees": 10025,
+    "taux_coupe": 0.0001,
+    "marge_mediane_px": 80.1,
+    "marge_p10_px": 29.6,
+    "crane_hors_source_exclu": 1075
+  },
+  "split": {
+    "switches": 72,
+    "entries": 36,
+    "stale_entries": 0,
+    "short_splits": 1,
+    "split_time_share": 0.4251,
+    "entry_ms": {
+      "median": 666.7,
+      "p90": 666.7
+    },
+    "entry_episode_ms": {
+      "median": 666.7,
+      "p90": 1083.3
+    },
+    "exit_ms": {
+      "median": 500.0,
+      "p90": 583.3
+    },
+    "exit_causes": {
+      "track_died": 27,
+      "not_ready": 9
+    },
+    "phantom_exits": 0,
+    "exit_apply_ms": {
+      "median": 0.0,
+      "p90": 0.0
+    },
+    "ease_deferred_frames": 135
   }
 }

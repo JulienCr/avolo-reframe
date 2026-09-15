@@ -275,3 +275,18 @@ d'un extrait annoté qui les distingue.
 
 C'est un constat de **politique**, pas de portage : suivi par l'issue GitHub
 #2, pour ne pas le mélanger à ce document.
+
+**Corrigé le 15 septembre 2026.** L'entrée en split ne se décide plus que sur
+des détections fraîches, et la sortie coupe sur l'image même où l'état bascule.
+Les défauts changent en conséquence (`split_exit_ms` 500, `track_hold_ms` 500,
+calés sur YOLO et non plus sur Vision) :
+
+| Configuration | Sortie du split, médiane | p90 |
+|---|---|---|
+| Anciens défauts (`split_exit_ms` 3000, `track_hold_ms` 6000) | 4 750 ms | 6 417 ms |
+| Nouveaux défauts (`split_exit_ms` 500, `track_hold_ms` 500) | 500 ms | 583 ms |
+
+Entrées sur piste périmée : 0 contre 8 sur 20 avant. Détail complet — la table
+avant/après à quatre colonnes, la section `split` du résumé, la correction de
+la règle de coupe de tête qui a servi à vérifier ce correctif — dans
+[`tests/corpus/README.md`](../tests/corpus/README.md).

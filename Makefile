@@ -4,6 +4,7 @@
 CLIP    ?= tests/fixtures/lab-avolo-58m22-70m00.mp4
 TRACE   ?= tests/corpus/traces/trace.jsonl
 SUMMARY ?= tests/corpus/traces/summary.json
+REPLAY  ?= tests/corpus/traces/replay.jsonl
 FPS     ?= 12
 MODEL   ?= models/yolo11m-pose.pt
 ARGS    ?=
@@ -12,7 +13,7 @@ ARGS    ?=
 export YOLO_AUTOINSTALL := false
 
 .DEFAULT_GOAL := help
-.PHONY: help sync check test model engine bench probe setup setup-camera run corpus
+.PHONY: help sync check test model engine bench probe setup setup-camera run corpus replay
 
 # $(info) is printed by make itself, so no shell quoting rules apply.
 help:
@@ -28,6 +29,7 @@ help:
 	$(info   make setup-camera  (re)construit la scène sur la caméra)
 	$(info   make run           la boucle de recadrage)
 	$(info   make corpus        rejeu déterministe hors OBS : CLIP vers TRACE et SUMMARY)
+	$(info   make replay        rejoue TRACE (--from-trace) vers REPLAY et SUMMARY, sans décoder ni détecter)
 	$(info )
 	$(info Arguments en plus : make run ARGS="--duration 60 --upper-body")
 	@cd .
@@ -65,3 +67,6 @@ run:
 
 corpus:
 	uv run python -m scripts.corpus $(CLIP) --fps $(FPS) --out $(TRACE) --summary-json $(SUMMARY) $(ARGS)
+
+replay:
+	uv run python -m scripts.corpus --from-trace $(TRACE) --out $(REPLAY) --summary-json $(SUMMARY) $(ARGS)

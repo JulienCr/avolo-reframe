@@ -198,10 +198,11 @@ produit, sans flottement. C'est la version bornée du tampon d'AutoFlip décrit 
 §4 : on ne tamponne pas un plan entier en direct, on en tamponne 500 ms.
 
 **Ce que ça n'achète pas** : le maintien de piste. Un sujet qui sort du champ est
-gardé `track_hold_ms` (6 s par défaut, calé sur les 4 850 ms de décrochage
-mesurés), et on ne retarde pas un direct de six secondes. Le délai couvre le
-temps de confirmation, pas le maintien — les deux correctifs sont complémentaires
-et le délai est le plus petit des deux.
+gardé `track_hold_ms` (500 ms par défaut depuis le calage YOLO du 15 septembre
+2026, contre 6 s à l'origine, calés sur les 4 850 ms de décrochage Vision — détail
+dans [`tests/corpus/README.md`](../tests/corpus/README.md)). Le délai couvre le
+temps de confirmation, pas le maintien — les deux correctifs restent
+complémentaires.
 
 **Le piège** : `gpu_delay` retarde la **vidéo seule**. Si la sortie verticale
 porte du son, ça donne 500 ms de désynchronisation labiale, bien plus visible que

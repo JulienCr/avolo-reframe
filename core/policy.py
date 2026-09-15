@@ -200,10 +200,11 @@ def _match_two_live(
 def _update_tracks(
     tracks: tuple[Track | None, Track | None], boxes: list[Rect], now_ms: float, p: PolicyParams
 ) -> tuple[Track | None, Track | None]:
-    """Match boxes to the two tracking slots by nearest centre x.
+    """Match boxes to the two tracking slots, globally when both are live.
 
     An unmatched slot keeps its last box for track_hold_ms, then dies:
-    this is what lets split survive a subject Vision drops briefly.
+    this is what lets split survive a short detector dropout, whatever
+    the detector.
     """
     remaining = list(boxes)
     updated = list(tracks)
