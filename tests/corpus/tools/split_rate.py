@@ -7,7 +7,7 @@ import json
 import sys
 
 from core.geometry import Rect
-from core.policy import PolicyParams, Track, _split_ready
+from core.policy import PolicyParams, split_ready
 
 path = sys.argv[1]
 p = PolicyParams()
@@ -27,8 +27,8 @@ with open(path) as f:
         n_multibody += 1
         # Mirror _update_tracks' 2-slot cap: take the two highest-score boxes.
         top2 = sorted(boxes, key=lambda b: -b["score"])[:2]
-        tracks = [Track(Rect(b["x"], b["y"], b["w"], b["h"]), entry["pts_ms"]) for b in top2]
-        if _split_ready(tracks, p):
+        rects = [Rect(b["x"], b["y"], b["w"], b["h"]) for b in top2]
+        if split_ready(rects, p):
             n_split_ready += 1
 
 print(f"frames replayed: {n_frames}")

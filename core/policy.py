@@ -4,6 +4,7 @@ No I/O, no clock reads. Time enters only as the now_ms argument.
 """
 
 from dataclasses import dataclass, replace
+from itertools import permutations
 
 from core.geometry import Rect, clamp_to_source, default_rect, expand, fit_ratio, union
 
@@ -23,11 +24,11 @@ class PolicyParams:
     split_enabled: bool = True
     split_min_gap: float = 0.15
     split_enter_ms: float = 600.0
-    # track_hold_ms and split_exit_ms both sit above the measured 4850 ms
-    # mean dropout stretch for a lost subject: shorter values would
-    # recreate the single/split oscillation this feature removes.
-    split_exit_ms: float = 3000.0
-    track_hold_ms: float = 6000.0
+    # split_exit_ms and track_hold_ms: picked by a sweep on the YOLO11-pose
+    # corpus trace (median dropout 250-333 ms) for a 500 ms median exit at
+    # one short split under 1.5 s. Vision setups override both in reframe.toml.
+    split_exit_ms: float = 500.0
+    track_hold_ms: float = 500.0
     # A third down from the top; a starting value to tune, not a fixed law.
     eye_line: float = 0.33
     max_zoom: float = 1.5
@@ -81,7 +82,7 @@ def initial_state(p: PolicyParams) -> PolicyState:
     )
 
 
-def _height_floor(p: PolicyParams) -> float:
+def height_floor(p: PolicyParams) -> float:
     """min_crop_h and max_zoom both floor the crop height; the larger of
     the two wins, so the tighter constraint is the one that actually holds.
     """
@@ -95,7 +96,7 @@ def _target_from_boxes(boxes: list[Rect], p: PolicyParams) -> Rect:
         p.source_w,
         p.source_h,
         p.ratio,
-        _height_floor(p),
+        height_floor(p),
         p.eye_line,
     )
 
@@ -124,7 +125,7 @@ def _gap_fraction(a: Rect, b: Rect, source_w: float) -> float:
     return (right.x - left.right) / source_w
 
 
-def _split_ready(alive: list[Track], p: PolicyParams) -> bool:
+def split_ready(boxes: list[Rect], p: PolicyParams) -> bool:
     """True when the single-mode target is degenerate and the two subjects
     are far enough apart that stacking them beats one shared crop.
 
@@ -132,10 +133,9 @@ def _split_ready(alive: list[Track], p: PolicyParams) -> bool:
     the union past the target ratio, and clamp_to_source pinned it to the
     full source height.
     """
-    boxes = [t.box for t in alive]
     merged = union(boxes)
     target = clamp_to_source(
-        fit_ratio(expand(merged, p.margin), p.ratio), p.source_w, p.source_h, p.ratio, _height_floor(p), p.eye_line
+        fit_ratio(expand(merged, p.margin), p.ratio), p.source_w, p.source_h, p.ratio, height_floor(p), p.eye_line
     )
     degenerate = (merged.w / merged.h) > p.ratio and target.h == p.source_h
     return degenerate and _gap_fraction(boxes[0], boxes[1], p.source_w) > p.split_min_gap
@@ -160,7 +160,7 @@ def _cell_rects(alive: list[Track], p: PolicyParams) -> tuple[Rect, Rect]:
     # Cell height is half the output height at the same width, so the
     # cell ratio is double the single-crop ratio.
     cell_ratio = p.ratio * 2
-    cell_min_h = _height_floor(p) / 2
+    cell_min_h = height_floor(p) / 2
     return tuple(
         clamp_to_source(
             fit_ratio(expand(_cell_source(t.box), p.margin), cell_ratio),
@@ -174,31 +174,61 @@ def _cell_rects(alive: list[Track], p: PolicyParams) -> tuple[Rect, Rect]:
     )
 
 
+def _match_two_live(
+    remaining: list[Rect], updated: list[Track | None], i0: int, i1: int, now_ms: float
+) -> list[Rect]:
+    """Assign remaining boxes to two already-live slots by lowest summed
+    |Δcx|, not slot 0's own nearest pick first: a slot-order-first greedy
+    can let slot 0 steal the box slot 1 actually needs.
+    """
+    if len(remaining) == 1:
+        box = remaining[0]
+        i = i0 if abs(box.cx - updated[i0].box.cx) <= abs(box.cx - updated[i1].box.cx) else i1
+        updated[i] = Track(box, now_ms)
+        return []
+
+    def cost(pair: tuple[int, int]) -> float:
+        a, b = pair
+        return abs(remaining[a].cx - updated[i0].box.cx) + abs(remaining[b].cx - updated[i1].box.cx)
+
+    best = min(permutations(range(len(remaining)), 2), key=cost)
+    updated[i0] = Track(remaining[best[0]], now_ms)
+    updated[i1] = Track(remaining[best[1]], now_ms)
+    return [b for k, b in enumerate(remaining) if k not in best]
+
+
 def _update_tracks(
     tracks: tuple[Track | None, Track | None], boxes: list[Rect], now_ms: float, p: PolicyParams
-) -> tuple[Track | None, Track | None]:
-    """Match boxes to the two tracking slots by nearest centre x.
+) -> tuple[tuple[Track | None, Track | None], bool]:
+    """Match boxes to the two tracking slots, globally when both are live.
 
-    An unmatched slot keeps its last box for track_hold_ms, then dies:
-    this is what lets split survive a subject Vision drops briefly.
+    An unmatched slot keeps its last box for track_hold_ms, then dies before
+    matching runs: a returning box refills it as a brand-new track rather
+    than reviving a slot whose detections had already expired. This is what
+    lets split survive a short detector dropout, whatever the detector.
+
+    Returns the updated slots and whether a slot died on this call.
     """
+    expired = [t is not None and now_ms - t.last_seen_ms >= p.track_hold_ms for t in tracks]
+    updated: list[Track | None] = [None if e else t for t, e in zip(tracks, expired)]
     remaining = list(boxes)
-    updated = list(tracks)
+    live = [i for i, t in enumerate(updated) if t is not None]
 
-    for i, track in enumerate(updated):
-        if track is None or not remaining:
-            continue
-        nearest = min(remaining, key=lambda b: abs(b.cx - track.box.cx))
-        updated[i] = Track(nearest, now_ms)
-        remaining.remove(nearest)
+    if len(live) == 2 and remaining:
+        remaining = _match_two_live(remaining, updated, live[0], live[1], now_ms)
+    else:
+        for i, track in enumerate(updated):
+            if track is None or not remaining:
+                continue
+            nearest = min(remaining, key=lambda b: abs(b.cx - track.box.cx))
+            updated[i] = Track(nearest, now_ms)
+            remaining.remove(nearest)
 
     for i, track in enumerate(updated):
         if track is None and remaining:
             updated[i] = Track(remaining.pop(0), now_ms)
 
-    return tuple(
-        None if t is not None and now_ms - t.last_seen_ms >= p.track_hold_ms else t for t in updated
-    )
+    return tuple(updated), any(expired)
 
 
 def _enter_split(state: PolicyState, alive: list[Track], now_ms: float, p: PolicyParams) -> tuple[PolicyState, Command]:
@@ -338,6 +368,22 @@ def _commit(
 def _step_single(
     state: PolicyState, boxes: list[Rect], now_ms: float, p: PolicyParams
 ) -> tuple[PolicyState, Command | None]:
+    # A split->single reset must cut on this very frame (see _reset_to_single):
+    # the crown/dead-zone/dwell dance below is for in-mode moves, and would
+    # otherwise defer or even swallow an exit that the state already committed to.
+    if state.mode_cut_pending:
+        if boxes:
+            target = _target_from_boxes(boxes, p)
+            last_seen_ms = now_ms
+        else:
+            alive_boxes = [t.box for t in state.tracks if t is not None]
+            if alive_boxes:
+                target = _target_from_boxes(alive_boxes, p)
+            else:
+                target = default_rect(p.source_w, p.source_h, p.ratio)
+            last_seen_ms = state.last_seen_ms
+        return _commit(state, target, state.current, last_seen_ms, now_ms, "exit", p)
+
     current = state.current
     last_seen_ms = state.last_seen_ms
     reason = "commit"
@@ -379,36 +425,88 @@ def _step_single(
     return _commit(state, target, current, last_seen_ms, now_ms, reason, p)
 
 
+def _locked_crown_command(
+    state: PolicyState, boxes: list[Rect], now_ms: float, p: PolicyParams
+) -> tuple[PolicyState, Command] | None:
+    """Crown override for a frame the lock would otherwise swallow: the
+    crown is a hard constraint everywhere else in the policy, so a playing
+    ease must not be allowed to sit on a violation until it finishes.
+    """
+    if state.mode == "split" and state.cells is not None:
+        alive = [t for t in state.tracks if t is not None]
+        if len(alive) == 2:
+            cells = _cell_rects(alive, p)
+            if _crown_violated(state.cells[0], cells[0]) or _crown_violated(state.cells[1], cells[1]):
+                return _commit_split(state, cells, state.cells, now_ms, state.split_exit_since_ms, "crown", p)
+        return None
+    if boxes:
+        target = _target_from_boxes(boxes, p)
+        if _crown_violated(state.current, target):
+            return _commit(state, target, state.current, now_ms, now_ms, "crown", p)
+    return None
+
+
+def _locked_step(
+    state: PolicyState, boxes: list[Rect], now_ms: float, p: PolicyParams
+) -> tuple[PolicyState, Command | None]:
+    """What a locked frame returns absent a due mode switch: the applied
+    geometry stays put unless the crown constraint forces a commit.
+    """
+    crown = _locked_crown_command(state, boxes, now_ms, p)
+    return crown if crown is not None else (state, None)
+
+
 def step(
     state: PolicyState, boxes: list[Rect], now_ms: float, p: PolicyParams
 ) -> tuple[PolicyState, Command | None]:
-    if state.busy_until_ms is not None and now_ms < state.busy_until_ms:
-        return state, None
+    locked = state.busy_until_ms is not None and now_ms < state.busy_until_ms
 
     if not p.split_enabled:
+        if locked:
+            return _locked_step(state, boxes, now_ms, p)
         return _step_single(state, boxes, now_ms, p)
 
-    tracks = _update_tracks(state.tracks, boxes, now_ms, p)
+    tracks, expired_now = _update_tracks(state.tracks, boxes, now_ms, p)
     alive = [t for t in tracks if t is not None]
-    ready = len(alive) == 2 and _split_ready(alive, p)
+    ready = len(alive) == 2 and split_ready([t.box for t in alive], p)
     tracked = replace(state, tracks=tracks)
+    # A slot that died on this very call carries no live evidence forward:
+    # the single-mode enter countdown must restart, not resume, on top of it.
+    enter_since_ms = None if expired_now else state.split_enter_since_ms
 
     if state.mode == "split":
         if len(alive) < 2:
             return _step_single(_reset_to_single(tracked), boxes, now_ms, p)
         if ready:
+            if locked:
+                return _locked_step(replace(tracked, split_exit_since_ms=None), boxes, now_ms, p)
             return _split_hold(tracked, alive, None, now_ms, p)
         since = state.split_exit_since_ms if state.split_exit_since_ms is not None else now_ms
         if now_ms - since >= p.split_exit_ms:
             return _step_single(_reset_to_single(tracked), boxes, now_ms, p)
+        if locked:
+            return _locked_step(replace(tracked, split_exit_since_ms=since), boxes, now_ms, p)
         return _split_hold(tracked, alive, since, now_ms, p)
 
     if not ready:
+        if locked:
+            return _locked_step(replace(tracked, split_enter_since_ms=None), boxes, now_ms, p)
         if state.split_enter_since_ms is not None:
             tracked = replace(tracked, split_enter_since_ms=None)
         return _step_single(tracked, boxes, now_ms, p)
 
-    since = state.split_enter_since_ms if state.split_enter_since_ms is not None else now_ms
+    # Entry may only fire from a frame where both tracks are fresh: a
+    # remembered pair can still justify staying in split (above), but not
+    # starting it -- so a stale-but-ready pair merely suspends the countdown.
+    fresh_both = all(t.last_seen_ms == now_ms for t in alive)
+    if not fresh_both:
+        if locked:
+            return _locked_step(replace(tracked, split_enter_since_ms=enter_since_ms), boxes, now_ms, p)
+        return _step_single(replace(tracked, split_enter_since_ms=enter_since_ms), boxes, now_ms, p)
+
+    since = enter_since_ms if enter_since_ms is not None else now_ms
     if now_ms - since >= p.split_enter_ms:
         return _enter_split(tracked, alive, now_ms, p)
+    if locked:
+        return _locked_step(replace(tracked, split_enter_since_ms=since), boxes, now_ms, p)
     return _step_single(replace(tracked, split_enter_since_ms=since), boxes, now_ms, p)

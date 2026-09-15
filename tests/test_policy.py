@@ -160,7 +160,12 @@ def test_no_transition_stacking():
     busy_state = state
     state, cmd = step(state, [Rect(800, 200, 300, 700)], state.busy_until_ms - 1, p)
     assert cmd is None
-    assert state == busy_state  # transition in flight: nothing moves
+    # Transition in flight: the applied crop and its own timers don't move.
+    # tracks does update through the lock (issue #2, fix c), so it's excluded.
+    assert state.current == busy_state.current
+    assert state.pending == busy_state.pending
+    assert state.busy_until_ms == busy_state.busy_until_ms
+    assert state.mode == busy_state.mode
 
 
 def test_lost_subject_holds_then_widens():
@@ -218,6 +223,11 @@ def test_two_far_subjects_enter_split():
     state, cmd = step(state, [box_a, box_b], 0.0, p)
     assert cmd is None and state.mode == "single"
 
+    # A detection inside track_hold_ms, so the final hop doesn't itself
+    # read as a gap long enough to expire and restart the countdown.
+    state, cmd = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
+    assert cmd is None and state.mode == "single"
+
     state, cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
     assert cmd is not None
     assert state.mode == "split"
@@ -245,11 +255,12 @@ def test_split_survives_losing_a_subject():
     state = initial_state(p)
 
     state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
     state, cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
     assert cmd is not None and state.mode == "split"
 
     t = p.split_enter_ms
-    while t < p.split_enter_ms + 5000.0:  # the measured mean dropout stretch
+    while t < p.split_enter_ms + p.track_hold_ms - 200.0:  # strictly below track_hold_ms
         t += 200.0
         state, _ = step(state, [box_a], t, p)
         assert state.mode == "split"
@@ -281,6 +292,7 @@ def test_split_does_not_flap():
 
     # Once split, oscillate the same way: bursts always short of split_exit_ms.
     state, _ = step(state, [box_a, box_b], t, p)
+    state, _ = step(state, [box_a, box_b], t + p.split_enter_ms / 2, p)
     state, cmd = step(state, [box_a, box_b], t + p.split_enter_ms, p)
     assert cmd is not None and state.mode == "split"
     t += p.split_enter_ms
@@ -297,6 +309,7 @@ def test_cells_never_swap():
     box_b = Rect(1400, 200, 150, 700)
     state = initial_state(p)
     state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
     state, cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
     assert state.mode == "split"
 
@@ -335,6 +348,7 @@ def test_split_cell_rects_keep_cell_ratio_and_stay_in_source():
     box_b = Rect(1400, 200, 150, 700)
     state = initial_state(p)
     state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
     state, cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
 
     for cell in cmd.cells:
@@ -364,6 +378,7 @@ def test_split_transitions_are_eased():
     box_b = Rect(1400, 200, 150, 700)
     state = initial_state(p)
     state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
     state, _ = step(state, [box_a, box_b], p.split_enter_ms, p)
 
     # Shifted well clear of the source edge, so the cell itself moves rather
@@ -473,12 +488,14 @@ def test_split_cell_uses_the_bust_when_available():
     box_a_full = Rect(300, 200, 150, 700)
     state = initial_state(p)
     state, _ = step(state, [box_a_full, box_b], 0.0, p)
+    state, _ = step(state, [box_a_full, box_b], p.split_enter_ms / 2, p)
     state, cmd_full = step(state, [box_a_full, box_b], p.split_enter_ms, p)
 
     # A tight head-and-shoulders sub-rect, well inside box_a_full.
     box_a_bust = Rect(300, 200, 150, 700, bust=(300.0, 200.0, 150.0, 180.0))
     state = initial_state(p)
     state, _ = step(state, [box_a_bust, box_b], 0.0, p)
+    state, _ = step(state, [box_a_bust, box_b], p.split_enter_ms / 2, p)
     state, cmd_bust = step(state, [box_a_bust, box_b], p.split_enter_ms, p)
 
     assert cmd_bust.cells[0].h < cmd_full.cells[0].h * 0.75
@@ -495,6 +512,7 @@ def test_split_cell_falls_back_to_full_box_without_bust():
 
     state = initial_state(p)
     state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
     state, cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
     assert cmd.cells[0] == expected
 
@@ -505,6 +523,7 @@ def test_split_cells_differ_when_heads_are_at_different_heights():
     seated = Rect(1400, 400, 200, 500)
     state = initial_state(p)
     state, _ = step(state, [standing, seated], 0.0, p)
+    state, _ = step(state, [standing, seated], p.split_enter_ms / 2, p)
     state, cmd = step(state, [standing, seated], p.split_enter_ms, p)
 
     top_cell, bottom_cell = cmd.cells  # top: smaller cx, i.e. `standing`
@@ -516,6 +535,7 @@ def test_split_cells_differ_when_heads_are_at_different_heights():
     moved_seated = Rect(1400, 100, 200, 500)
     state2 = initial_state(p)
     state2, _ = step(state2, [standing, moved_seated], 0.0, p)
+    state2, _ = step(state2, [standing, moved_seated], p.split_enter_ms / 2, p)
     state2, cmd2 = step(state2, [standing, moved_seated], p.split_enter_ms, p)
     assert cmd2.cells[0] == top_cell
     assert cmd2.cells[1] != bottom_cell
@@ -539,6 +559,7 @@ def test_crop_never_cuts_the_head():
     box_b = Rect(1400, 200, 150, 700, crown=60.0)
     state = initial_state(p)
     state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
     state, cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
     assert cmd.cells[0].y <= box_a.crown + 1e-9
     assert cmd.cells[1].y <= box_b.crown + 1e-9
@@ -582,6 +603,7 @@ def test_mode_changes_always_cut():
     state = initial_state(p)
 
     state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
     state, enter_cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
     assert enter_cmd is not None and state.mode == "split"
     assert enter_cmd.duration_ms == 0.0
@@ -600,3 +622,325 @@ def test_mode_changes_always_cut():
     assert exit_cmd is not None
     assert exit_cmd.duration_ms == 0.0
     assert exit_cmd.frm is None and exit_cmd.frm_cells is None
+
+
+# --- issue #2: split decided on fresh detections, not remembered tracks -----
+
+
+def test_split_entry_ignores_a_stale_remembered_pair():
+    # box_b goes stale (still alive) past split_enter_ms; entry must not
+    # fire on the remembered pair -- only a fresh ready frame may start it.
+    p = PolicyParams()
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+
+    state, cmd = step(state, [box_a, box_b], 0.0, p)
+    assert cmd is None and state.mode == "single"
+    state, cmd = step(state, [box_a, box_b], p.split_enter_ms - 100.0, p)
+    assert cmd is None and state.mode == "single"
+
+    state, cmd = step(state, [box_a], p.split_enter_ms + 200.0, p)
+    assert cmd is None
+    assert state.mode == "single"
+
+
+def test_split_entry_resumes_after_one_missed_frame():
+    p = PolicyParams()
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+
+    state, cmd = step(state, [box_a, box_b], 0.0, p)  # countdown starts at t=0
+    assert cmd is None and state.mode == "single"
+
+    # Every miss stays inside track_hold_ms since that box's last sighting,
+    # so neither track ever actually dies -- the countdown just suspends.
+    state, cmd = step(state, [box_a], 150.0, p)  # box_b stale but tracked: suspended
+    assert cmd is None and state.mode == "single"
+
+    state, cmd = step(state, [box_a, box_b], 300.0, p)
+    assert cmd is None and state.mode == "single"
+
+    state, cmd = step(state, [box_a], 450.0, p)  # box_b stale but tracked: suspended
+    assert cmd is None and state.mode == "single"
+
+    # First fresh ready frame at or after split_enter_ms from the start (t=0).
+    state, cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
+    assert cmd is not None
+    assert state.mode == "split"
+
+
+def test_split_entry_restarts_when_a_track_expires_between_frames():
+    p = PolicyParams()
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+
+    state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a], p.track_hold_ms * 0.6, p)
+    # box_b dies on this frame while the pair is not ready: its countdown must go with it.
+    state, _ = step(state, [box_a], p.split_enter_ms, p)
+    state, cmd = step(state, [box_a, box_b], p.split_enter_ms + 100.0, p)
+    assert cmd is None and state.mode == "single"
+
+
+def test_split_entry_restarts_after_a_gap_longer_than_track_hold():
+    p = PolicyParams()
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+
+    state, cmd = step(state, [box_a, box_b], 0.0, p)  # countdown starts at t=0
+    assert cmd is None and state.mode == "single"
+
+    # No call at all until well past both track_hold_ms and split_enter_ms:
+    # both tracks have expired by the time this frame arrives, so the
+    # returning pair must not cash in the now-dead countdown immediately.
+    gap_ms = p.track_hold_ms + p.split_enter_ms
+    state, cmd = step(state, [box_a, box_b], gap_ms, p)
+    assert cmd is None and state.mode == "single"
+
+    # Countdown restarted at gap_ms: bridge it before track_hold_ms elapses
+    # again, then let the full split_enter_ms run out from the restart.
+    state, cmd = step(state, [box_a, box_b], gap_ms + p.track_hold_ms * 0.6, p)
+    assert cmd is None and state.mode == "single"
+
+    state, cmd = step(state, [box_a, box_b], gap_ms + p.split_enter_ms, p)
+    assert cmd is not None
+    assert state.mode == "split"
+
+
+def test_split_matches_subjects_globally_not_by_slot_order():
+    p = PolicyParams()
+    box_a = Rect(300, 200, 150, 700)  # smaller cx -> slot 0 at entry
+    box_b = Rect(1400, 200, 150, 700)  # larger cx -> slot 1
+    state = initial_state(p)
+    state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
+    state, cmd = step(state, [box_a, box_b], p.split_enter_ms, p)
+    assert cmd is not None and state.mode == "split"
+
+    # box_a drops out for one frame: slot-order-first greedy lets slot 0
+    # steal box_b (the only remaining box) since it processes slot 0 first,
+    # leaving slot 1 holding a stale copy of that same subject.
+    t = p.split_enter_ms + 200.0
+    state, cmd = step(state, [box_b], t, p)
+    assert state.mode == "split"
+    alive = [tr for tr in state.tracks if tr is not None]
+    assert len(alive) == 2
+    assert abs(alive[0].box.cx - alive[1].box.cx) > 10.0
+
+
+def test_split_entry_matches_boxes_globally_despite_a_decoy():
+    # Two live tracks already close together (established below split_ready)
+    # at cx 491.2 and 743.2. A later fixed-order triple then makes the pair
+    # far apart for real (114.6, 820.5) plus an unrelated third box
+    # (1172.3): slot-order-first greedy pairs the two boxes on the right
+    # instead (not split-ready), only the cheapest global assignment
+    # recovers the genuinely far-apart pair.
+    p = PolicyParams()
+
+    def mk(cx: float) -> Rect:
+        return Rect(cx - 75.0, 200.0, 150.0, 700.0)
+
+    state = initial_state(p)
+    state, cmd = step(state, [mk(491.2), mk(743.2)], 0.0, p)
+    assert cmd is None and state.mode == "single"
+
+    left, right_far, right_near = mk(114.6), mk(1172.3), mk(820.5)
+    boxes = [left, right_far, right_near]
+    t = 0.0
+    entered = False
+    for _ in range(10):
+        t += 100.0
+        state, cmd = step(state, boxes, t, p)
+        if state.mode == "split":
+            entered = True
+            break
+
+    assert entered
+    assert cmd is not None and cmd.mode == "split"
+
+
+def test_split_tracks_update_through_the_ease_lock():
+    # track_hold_ms < ease_ms: without updating tracks during the lock,
+    # last_seen_ms is stale the moment it lifts, so a subject detected
+    # throughout reads as gone -- one missed frame after then kills it.
+    p = PolicyParams(track_hold_ms=500.0, ease_ms=1000.0)
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+    state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms, p)
+    assert state.mode == "split"
+
+    moved_a = Rect(600, 200, 150, 700)
+    t = p.split_enter_ms
+    state, cmd = step(state, [moved_a, box_b], t, p)
+    assert cmd is None and state.pending_cells is not None
+
+    state, cmd = step(state, [moved_a, box_b], t + p.dwell_ms, p)
+    assert cmd is not None
+    busy_until = state.busy_until_ms
+    assert busy_until is not None
+
+    t = t + p.dwell_ms
+    while True:  # both subjects detected throughout the lock
+        t += 100.0
+        if t >= busy_until:  # busy_until itself is already unlocked
+            break
+        state, _ = step(state, [moved_a, box_b], t, p)
+        assert state.mode == "split"
+
+    state, cmd = step(state, [moved_a], busy_until + 1.0, p)  # one missed frame
+    assert state.mode == "split"
+
+
+def test_split_exit_by_track_death_cuts_on_the_same_frame():
+    p = PolicyParams()
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+    state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms, p)
+    assert state.mode == "split"
+
+    t = p.split_enter_ms
+    exit_cmd = None
+    while t < p.split_enter_ms + p.track_hold_ms + 1000.0:
+        t += 200.0
+        state, cmd = step(state, [box_a], t, p)
+        if state.mode == "single":
+            exit_cmd = cmd
+            break
+
+    assert exit_cmd is not None
+    assert exit_cmd.mode == "single"
+    assert exit_cmd.duration_ms == 0.0
+    assert exit_cmd.frm is None
+
+
+def test_split_exit_by_not_ready_cuts_on_the_same_frame():
+    # close_a/close_b are chosen so the single target for that pair sits
+    # inside the dead zone of the union of cells: without an immediate cut,
+    # the exit would never actually be applied (verified separately).
+    p = PolicyParams()
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    close_a = Rect(810, 200, 150, 700)
+    close_b = Rect(960, 200, 150, 700)
+    state = initial_state(p)
+    state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms, p)
+    assert state.mode == "split"
+
+    t = p.split_enter_ms
+    exit_cmd = None
+    while t < p.split_enter_ms + p.split_exit_ms + 1000.0:
+        t += 200.0
+        state, cmd = step(state, [close_a, close_b], t, p)
+        if state.mode == "single":
+            exit_cmd = cmd
+            break
+
+    assert exit_cmd is not None
+    assert exit_cmd.mode == "single"
+    assert exit_cmd.duration_ms == 0.0
+    assert exit_cmd.frm is None
+
+
+# --- a due mode switch always cuts through an in-flight ease lock ----------
+
+
+def _lock_in_single_mode(p: PolicyParams) -> PolicyState:
+    steady = _target([Rect(800, 200, 300, 700)], p)
+    moved_box = Rect(1200, 200, 300, 700)
+    state = PolicyState(current=steady, pending=None, pending_since_ms=None, last_seen_ms=0.0, busy_until_ms=None)
+    state, cmd = step(state, [moved_box], 0.0, p)
+    state, cmd = step(state, [moved_box], p.dwell_ms, p)
+    assert cmd is not None and state.busy_until_ms is not None
+    return state
+
+
+def test_mode_switch_cuts_during_the_lock():
+    p = PolicyParams(ease_ms=5000.0)
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = _lock_in_single_mode(p)
+    busy_until = state.busy_until_ms
+
+    t = p.dwell_ms
+    switched_at = None
+    while t < busy_until - 1:
+        t += 100.0
+        state, cmd = step(state, [box_a, box_b], t, p)
+        if state.mode == "split":
+            switched_at = t
+            break
+
+    assert switched_at is not None
+    assert switched_at < busy_until  # fired while the lock was still active
+
+
+# --- crown constraint holds even during an in-flight ease lock -------------
+
+
+def test_crown_violation_commits_through_the_lock_single():
+    p = PolicyParams(ease_ms=5000.0)
+    state = _lock_in_single_mode(p)
+    busy_until = state.busy_until_ms
+
+    # Same box the lock is easing to, but its crown has since risen above
+    # the already-applied crop -- a hard constraint, not a preference the
+    # lock should be allowed to postpone.
+    risen = Rect(1200, 200, 300, 700, crown=50.0)
+    t = p.dwell_ms + 10.0
+    assert t < busy_until
+    state, cmd = step(state, [risen], t, p)
+
+    assert cmd is not None
+    assert cmd.reason == "crown"
+    assert cmd.target.y <= risen.crown + 1e-9
+
+
+def test_crown_violation_commits_through_the_lock_split():
+    p = PolicyParams(ease_ms=5000.0)
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+    state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms / 2, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms, p)
+    assert state.mode == "split"
+
+    moved_a = Rect(600, 200, 150, 700)
+    t = p.split_enter_ms
+    state, _ = step(state, [moved_a, box_b], t, p)
+    state, cmd = step(state, [moved_a, box_b], t + p.dwell_ms, p)
+    assert cmd is not None and state.busy_until_ms is not None
+    busy_until = state.busy_until_ms
+
+    risen_a = Rect(600, 200, 150, 700, crown=50.0)
+    t2 = t + p.dwell_ms + 10.0
+    assert t2 < busy_until
+    state, cmd = step(state, [risen_a, box_b], t2, p)
+
+    assert cmd is not None
+    assert cmd.reason == "crown"
+    assert cmd.mode == "split"
+
+
+def test_no_crown_violation_still_no_command_during_the_lock():
+    p = PolicyParams(ease_ms=5000.0)
+    state = _lock_in_single_mode(p)
+    busy_until = state.busy_until_ms
+
+    t = p.dwell_ms + 10.0
+    assert t < busy_until
+    state, cmd = step(state, [Rect(1200, 200, 300, 700)], t, p)
+
+    assert cmd is None
