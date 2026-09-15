@@ -1,6 +1,6 @@
 """Latency bench: .pt vs .engine YOLO11-pose, same process, same 39 corpus frames.
 
-Run as: uv run python tests/corpus/tools/bench_detectors.py [model_stem]
+Run as: uv run python tests/corpus/tools/bench_detectors.py [path/to/model.pt]
 """
 
 import glob
@@ -16,7 +16,8 @@ from PIL import Image
 from adapters.detect_yolo import YoloDetector
 
 _FRAMES_DIR = Path(__file__).resolve().parents[1] / "frames"
-_MODEL_DIR = Path(__file__).resolve().parents[3] / "models"
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DEFAULT_MODEL = _REPO_ROOT / "models" / "yolo11m-pose.pt"
 _WIDTH = 640
 _JPEG_QUALITY = 75
 _ROUNDS = 6
@@ -39,12 +40,12 @@ def percentile(values: list[float], q: float) -> float:
 
 
 def main() -> None:
-    stem = sys.argv[1] if len(sys.argv) > 1 else "yolo11m-pose"
+    model_path = Path(sys.argv[1]) if len(sys.argv) > 1 else _DEFAULT_MODEL
     frames = [_resized_jpeg(Path(p)) for p in sorted(glob.glob(str(_FRAMES_DIR / "*.jpg")))]
     print(f"{len(frames)} images, {_WIDTH}px de large, qualité JPEG {_JPEG_QUALITY}.")
 
-    detectors = {"pt": YoloDetector(str(_MODEL_DIR / f"{stem}.pt"))}
-    engine_path = _MODEL_DIR / f"{stem}.engine"
+    detectors = {"pt": YoloDetector(str(model_path))}
+    engine_path = model_path.with_suffix(".engine")
     if engine_path.is_file():
         detectors["engine"] = YoloDetector(str(engine_path))
     else:

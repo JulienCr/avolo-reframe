@@ -3,10 +3,11 @@
 # chargé automatiquement (ou passez --config chemin/vers/fichier.toml).
 #
 # Priorité : ligne de commande > ce fichier > valeurs par défaut intégrées.
-# Chaque valeur ci-dessous EST la valeur par défaut intégrée, à l'exception de
-# detector : le défaut intégré dépend de la plateforme (voir plus bas). Sur
-# Windows, un chemin doit utiliser des « / » ou des guillemets simples
-# ("D:\dev" n'est pas un TOML valide) -- écrivez "D:/dev/..." ou 'D:\dev\...'.
+# Chaque valeur ci-dessous EST la valeur par défaut intégrée -- detector est
+# laissé en commentaire pour que le défaut dépendant de la plateforme
+# s'applique (voir [detector] plus bas). Sur Windows, un chemin doit utiliser
+# des « / » ou des guillemets simples ("D:\dev" n'est pas un TOML valide) --
+# écrivez "D:/dev/..." ou 'D:\dev\...'.
 
 [connection]
 # Utilisé par scripts.run ET scripts.setup_scene.
@@ -22,10 +23,10 @@ scene = "AVOLO Reframe POC"
 
 [detector]
 # pose ou vision (Apple Vision, macOS uniquement) ou yolo. Défaut intégré :
-# pose sur macOS, yolo ailleurs -- la valeur ci-dessous n'est donc le défaut
-# que sur macOS.
-detector = "pose"
-upper_body = false  # tête+torse au lieu du corps entier (vision seulement)
+# pose sur macOS, yolo ailleurs. Laissé en commentaire pour que ce défaut
+# s'applique -- décommentez pour forcer un détecteur particulier.
+# detector = "pose"
+upper_body = false  # tête+torse au lieu du corps entier (tous détecteurs)
 yolo_model = "models/yolo11m-pose.pt"  # poids YOLO11-pose (detector = yolo)
 
 [loop]

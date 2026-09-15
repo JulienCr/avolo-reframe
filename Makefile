@@ -49,7 +49,7 @@ engine:
 	uv run yolo export model=$(MODEL) format=engine half=True imgsz=640 batch=1 device=0
 
 bench:
-	uv run python tests/corpus/tools/bench_detectors.py
+	uv run python tests/corpus/tools/bench_detectors.py $(MODEL)
 
 probe:
 	uv run python -m scripts.probe $(ARGS)
