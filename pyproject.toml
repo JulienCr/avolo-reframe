@@ -6,19 +6,46 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "websockets>=13",
     "pillow>=10",
-    "pyobjc-framework-Vision>=10",
-    "pyobjc-framework-Quartz>=10",
-    "pyobjc-framework-avfoundation>=12.2.2",
+    "pyobjc-framework-Vision>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-avfoundation>=12.2.2; sys_platform == 'darwin'",
+    "torch==2.8.0; sys_platform == 'win32'",
+    "torchvision==0.23.0; sys_platform == 'win32'",
+    "ultralytics==8.4.121; sys_platform == 'win32'",
+    "numpy>=1.26; sys_platform == 'win32'",
+    "onnx>=1.17; sys_platform == 'win32'",
+    "onnxslim>=0.1.82; sys_platform == 'win32'",
+    # Pinned below TensorRT 11: TRT 11 is strongly-typed only and needs
+    # NVIDIA ModelOpt to bake FP16 into the ONNX graph before build; TRT 10
+    # still takes the classic BuilderFlag.FP16 path ultralytics falls back to.
+    "tensorrt-cu12==10.9.0.34; sys_platform == 'win32'",
+    "tensorrt-cu12-bindings==10.9.0.34; sys_platform == 'win32'",
+    "tensorrt-cu12-libs==10.9.0.34; sys_platform == 'win32'",
 ]
-
-[project.optional-dependencies]
-yolo = ["ultralytics>=8.3", "numpy>=1.26"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
 
 [tool.uv]
 package = false
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32'" }]
+# tensorrt-cu12-libs' PyPI sdist fetches its real wheel from pypi.nvidia.com at
+# build time via a wheel-stub backend; going straight to that index skips the build.
+tensorrt-cu12-libs = [{ index = "nvidia", marker = "sys_platform == 'win32'" }]
+tensorrt-cu12-bindings = [{ index = "nvidia", marker = "sys_platform == 'win32'" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,7 +1,8 @@
 # TODO
 
 Ce qui reste, par ordre de ce qui bloque le plus. Établi le 13 septembre 2026,
-au terme du PoC macOS.
+au terme du PoC macOS ; mis à jour le 15 septembre 2026, au terme du portage
+Windows.
 
 Ce qui est **déjà tranché** est en bas, pour que personne ne le rouvre.
 
@@ -9,25 +10,24 @@ Ce qui est **déjà tranché** est en bas, pour que personne ne le rouvre.
 
 ## Bloquant pour la cible de production
 
-La cible est **Windows 11, i9-14900K, RTX 4090**. Tout ce qui touche au détecteur
-est à refaire là-bas : **Apple Vision n'existe pas sur Windows**, donc aucune
-latence de détection mesurée ici n'a de valeur pour la production.
+La cible est **Windows 11, i9-14900K, RTX 4090**. Elle a maintenant ses propres
+mesures — détail dans [`docs/poc-windows.md`](docs/poc-windows.md).
 
-- [ ] **YOLO11-pose à lot unitaire, en TensorRT, sur la 4090.** C'est le chiffre
-      qui décide de la cadence de détection tenable. Interdiction de l'extrapoler
-      des 145 im/s relevées **par lots** : le direct impose un lot de un, dominé
-      par le coût de lancement des noyaux. Leviers déjà classés par rentabilité
-      dans le dossier de sources (`imgsz` 960→640, export TRT, modèle plus petit).
-- [ ] **`GetSourceScreenshot` sur Windows.** La lecture GPU passe par D3D11 et non
-      Metal ; les 5 à 20 ms mesurés ici ne se transposent pas. C'est ce chiffre
-      qui valide ou invalide le sondage d'images par le websocket sur la cible.
-      `scripts/probe.py` le rejoue tel quel.
-- [ ] **Rejouer tout le go/no-go sur la machine de production**, Aitum Vertical
-      installé. `uv run python -m scripts.probe`, sort 0 si tout passe.
+- [x] **YOLO11-pose à lot unitaire, en TensorRT, sur la 4090.** Mesuré le
+      15 septembre 2026 : `.pt` fp16 médiane 13,88 ms, `.engine` TensorRT fp16
+      médiane 7,27 ms, sur 39 images du corpus, lot unitaire, même processus.
+      La boucle en direct tient 30 im/s dans les deux cas.
+- [x] **`GetSourceScreenshot` sur Windows.** Mesuré : médiane 4,2 ms en 640 px,
+      21,4 ms en 1920 px — le websocket reste praticable, la lecture D3D11 est
+      simplement un peu plus lente que le Metal du Mac sur le format large.
+- [x] **Rejoué tout le go/no-go sur la machine de production**, Aitum Vertical
+      installé (`make probe`, sort 0). `GetCanvasList` montre bien un second
+      canevas « Aitum Vertical » 1080x1920 @ 60 : l'installateur Windows existe.
+- [x] **`adapters/detect_yolo.py` écrit**, avec `pose_geometry.py` pour la
+      logique crâne/buste/ancre partagée et le remap COCO-17 → Vision.
 - [ ] **`dshow_input` au lieu de `macos-avcapture`** dans `scripts/setup_scene.py`.
-- [ ] **Vérifier qu'Aitum Vertical publie bien un installateur Windows.** La 1.6.4
-      ne semble exposer que macOS, Linux et les sources ; les versions antérieures
-      avaient du Windows. À confirmer **avant** de bâtir la chaîne dessus.
+      Le code est écrit et bascule sur `--camera`, mais **jamais testé en direct
+      avec une caméra branchée** — seul le rejeu sur la vidéo de test l'a exercé.
 
 ## Dette de mesure
 
@@ -75,9 +75,17 @@ derrière elle. L'instrument existe désormais ; les mesures, non.
       laisse `PolicyParams` et `PolicyState` sur l'ancienne. Le cas des
       identifiants est traité (revérification toutes les 2 s) ; celui de la
       résolution demanderait de réinitialiser tout l'état de la politique.
-- [ ] **`adapters/detect_yolo.py` n'existe pas.** `--detector yolo` dégrade
-      proprement avec un message, mais le module est à écrire. La comparaison
-      Vision/YOLO n'a de sens que contre le corpus, pas contre une session libre.
+- [ ] **Le split décide sur des pistes mémorisées, pas sur des détections
+      fraîches** (issue GitHub #2). `_split_ready` laisse le split survivre à
+      un sujet qui n'est plus détecté ; plus de la moitié des entrées en split
+      se font sur une piste périmée. Baisser `track_hold_ms` échange de la
+      latence contre du scintillement, ce n'est pas un réglage gratuit.
+- [ ] **Le go/no-go 3 (crop sans ouvrir le filtre) ne prouve rien par hachage
+      sur une source en mouvement.** Sur la scène de mesure Windows, la vidéo
+      de test tourne en boucle : les empreintes diffèrent avant/après de toute
+      façon. Seule la relecture (`cropRight` envoyé et relu à la même valeur)
+      prouve le crop — à garder en tête avant de lire ce go/no-go comme une
+      preuve par hachage.
 
 ## Fonctionnalités visées
 
@@ -86,9 +94,12 @@ derrière elle. L'instrument existe désormais ; les mesures, non.
       `SetSceneItemTransform` acceptent le `sceneUuid` seul, et le crop s'y relit
       à l'identique. Attention, `GetSourceScreenshot` ne trouve une scène d'un
       canevas non principal que par `sourceUuid`, jamais par `sourceName`.
-- [ ] **L'air devant le regard.** Le yaw de la tête est mesuré (−47° sur un sujet
-      de profil) et **la politique ne s'en sert pas**. Décaler le cadre du côté où
-      le sujet regarde est une règle classique de cadrage, et la donnée est déjà là.
+- [ ] **L'air devant le regard.** Le yaw de la tête est mesuré côté Vision
+      (−47° sur un sujet de profil) et **la politique ne s'en sert pas**.
+      Décaler le cadre du côté où le sujet regarde est une règle classique de
+      cadrage, et la donnée est déjà là. Côté YOLO, le yaw resterait à estimer
+      depuis les 5 points de visage COCO — piste posée, jamais mesurée, suivie
+      par l'issue GitHub #1.
 - [ ] **Cadrer sur le locuteur** via `InputVolumeMeters` — 20 relevés par seconde,
       sans GPU ni modèle. **Dépendance qui décide de tout : un micro par comédien
       sur une entrée OBS distincte.** À vérifier sur la configuration son de

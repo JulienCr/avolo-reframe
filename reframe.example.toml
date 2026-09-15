@@ -3,13 +3,18 @@
 # chargé automatiquement (ou passez --config chemin/vers/fichier.toml).
 #
 # Priorité : ligne de commande > ce fichier > valeurs par défaut intégrées.
-# Chaque valeur ci-dessous EST la valeur par défaut intégrée : ce fichier ne
-# change rien tant que vous ne modifiez pas une valeur.
+# Chaque valeur ci-dessous EST la valeur par défaut intégrée -- detector est
+# laissé en commentaire pour que le défaut dépendant de la plateforme
+# s'applique (voir [detector] plus bas). Sur Windows, un chemin doit utiliser
+# des « / » ou des guillemets simples ("D:\dev" n'est pas un TOML valide) --
+# écrivez "D:/dev/..." ou 'D:\dev\...'.
 
 [connection]
 # Utilisé par scripts.run ET scripts.setup_scene.
 url = "ws://127.0.0.1:4455"
-password = ""  # vide = pas d'authentification obs-websocket
+# Requis si l'authentification obs-websocket est activée. Ne committez jamais
+# un vrai mot de passe : ce fichier n'est qu'un exemple.
+password = ""
 control_port = 4466  # port du dock de contrôle HTTP (0 pour le désactiver)
 
 # scene n'est utilisé que par scripts.run (le nom de scène est fixe côté
@@ -17,8 +22,12 @@ control_port = 4466  # port du dock de contrôle HTTP (0 pour le désactiver)
 scene = "AVOLO Reframe POC"
 
 [detector]
-detector = "pose"  # pose, vision ou yolo
-upper_body = false  # tête+torse au lieu du corps entier (vision seulement)
+# pose ou vision (Apple Vision, macOS uniquement) ou yolo. Défaut intégré :
+# pose sur macOS, yolo ailleurs. Laissé en commentaire pour que ce défaut
+# s'applique -- décommentez pour forcer un détecteur particulier.
+# detector = "pose"
+upper_body = false  # tête+torse au lieu du corps entier (tous détecteurs)
+yolo_model = "models/yolo11m-pose.pt"  # poids YOLO11-pose (detector = yolo)
 
 [loop]
 fps = 12.0

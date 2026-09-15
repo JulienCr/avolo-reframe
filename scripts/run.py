@@ -14,7 +14,7 @@ from pathlib import Path
 
 from adapters.animator import Animator, ApplyFn
 from adapters.control import ControlState, start_server
-from adapters.detector import Detector, to_source_rect
+from adapters.detector import build_detector, to_source_rect
 from adapters.frames import FrameSource
 from adapters.obsws import ObsWs, ObsWsError
 from core.geometry import Rect, clamp_to_source, expand, fit_ratio, to_crop, union
@@ -52,6 +52,7 @@ CONFIG_SCHEMA: dict[str, dict[str, tuple[str, type | tuple[type, ...]]]] = {
     "detector": {
         "detector": ("detector", str),
         "upper_body": ("upper_body", bool),
+        "yolo_model": ("yolo_model", str),
     },
     "loop": {
         "fps": ("fps", (int, float)),
@@ -165,11 +166,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--url", default="ws://127.0.0.1:4455")
     parser.add_argument("--password", default=None)
     parser.add_argument("--scene", default=SCENE_NAME)
-    parser.add_argument("--detector", choices=("pose", "vision", "yolo"), default="pose")
+    parser.add_argument(
+        "--detector", choices=("pose", "vision", "yolo"), default="pose" if sys.platform == "darwin" else "yolo"
+    )
     parser.add_argument(
         "--upper-body", action=argparse.BooleanOptionalAction, default=False,
-        help="Vision : tête+torse au lieu du corps entier.",
+        help="Tête+torse au lieu du corps entier (buste pour pose et yolo).",
     )
+    parser.add_argument("--yolo-model", default="models/yolo11m-pose.pt", help="Chemin du modèle yolo (.pt ou .engine).")
     parser.add_argument("--fps", type=float, default=12.0)
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--duration", type=float, default=0.0, help="0 = jusqu'à Ctrl-C")
@@ -202,7 +206,8 @@ def parse_args() -> argparse.Namespace:
         "--features",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Extraction visage/pose (overlay OBS) : coûteuse (~20-25ms/image), désactivée par défaut.",
+        help="Extraction visage/pose (overlay OBS) : coûteuse (~20-25ms/image) sur macOS (Apple Vision), "
+        "quasi gratuite ailleurs (réutilise la détection de pose), désactivée par défaut.",
     )
 
     config_path = pre_args.config or DEFAULT_CONFIG_PATH
@@ -210,23 +215,6 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     print(status)
     return args
-
-
-def build_detector(name: str, upper_body: bool) -> Detector:
-    if name == "pose":
-        from adapters.detect_pose import PoseDetector
-
-        return PoseDetector(bust=upper_body)
-    if name == "vision":
-        from adapters.detect_vision import VisionDetector
-
-        return VisionDetector(upper_body=upper_body)
-    try:
-        from adapters.detect_yolo import YoloDetector
-    except ImportError as exc:
-        print(f"Détecteur yolo indisponible ({exc}). Installez l'extra [yolo] ou utilisez --detector vision.")
-        sys.exit(1)
-    return YoloDetector()
 
 
 def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int]:
@@ -409,6 +397,22 @@ def cells_dict(cells: tuple[Rect, Rect] | None, source_w: int, source_h: int) ->
     return [{"x": r.x / source_w, "y": r.y / source_h, "w": r.w / source_w, "h": r.h / source_h} for r in cells]
 
 
+def poses_features_dict(poses: list) -> dict:
+    """Overlay payload shaped like adapters.features.Features, from poses already computed for this frame."""
+    return {
+        "faces": [],
+        "bodies": [
+            {
+                "joints": pose.joints,
+                "shoulder_angle_deg": pose.shoulder_angle_deg,
+                "box": [pose.box.x, pose.box.y, pose.box.w, pose.box.h],
+            }
+            for pose in poses
+        ],
+        "timings_ms": {},
+    }
+
+
 def state_dict(s: PolicyState) -> dict:
     return {
         "current": rect_dict(s.current),
@@ -460,7 +464,10 @@ def print_summary(
 
 def main() -> None:
     args = parse_args()
-    detector = build_detector(args.detector, args.upper_body)
+    detector = build_detector(args.detector, args.upper_body, args.yolo_model)
+    if args.features and sys.platform != "darwin" and not hasattr(detector, "detect_poses"):
+        print(f"--features exige un détecteur qui expose detect_poses() ; « {detector.name} » ne l'expose pas.")
+        sys.exit(1)
 
     obs = ObsWs(url=args.url, password=args.password)
     try:
@@ -513,15 +520,18 @@ def main() -> None:
                 "Dans OBS : ajoutez une Browser Source avec cette URL, taille 1200x675, "
                 "position (60, 202), au-dessus des items caméra."
             )
+            if sys.platform != "darwin":
+                print("Hors macOS : l'overlay ne montre que le squelette YOLO (pas de visage, pas de yaw).")
 
     feature_extractor = None
-    if args.features:
+    if args.features and sys.platform == "darwin":
         from adapters.features import FeatureExtractor
 
         feature_extractor = FeatureExtractor()
+    use_pose_features = args.features and feature_extractor is None
 
     frames = FrameSource(obs, CAM_NAME, width=args.width)
-    log_file = open(args.log, "w") if args.log else None
+    log_file = open(args.log, "w", newline="\n") if args.log else None
 
     stats: dict[str, list[float]] = {"capture": [], "detect": [], "policy": [], "send": [], "features": []}
     iterations = 0
@@ -554,7 +564,7 @@ def main() -> None:
                     p, current_fps, upper_body_wanted, paused = control.get_controls()
                     action = control.pop_action()
                     if upper_body_wanted != current_upper_body:
-                        detector = build_detector(args.detector, upper_body_wanted)
+                        detector = build_detector(args.detector, upper_body_wanted, args.yolo_model)
                         current_upper_body = upper_body_wanted
                         control.set_detector_name(detector.name)
                     target_period = 1.0 / current_fps
@@ -562,13 +572,21 @@ def main() -> None:
                 t0 = time.perf_counter()
                 jpeg = frames.grab()
                 t1 = time.perf_counter()
-                boxes = detector.detect(jpeg)
+                if use_pose_features:
+                    poses = detector.detect_poses(jpeg)
+                    boxes = [p.box for p in poses]
+                else:
+                    boxes = detector.detect(jpeg)
                 t2 = time.perf_counter()
 
                 features_payload = None
                 if feature_extractor is not None:
                     tf0 = time.perf_counter()
                     features_payload = dataclasses.asdict(feature_extractor.extract(jpeg))
+                    stats["features"].append((time.perf_counter() - tf0) * 1000)
+                elif use_pose_features:
+                    tf0 = time.perf_counter()
+                    features_payload = poses_features_dict(poses)
                     stats["features"].append((time.perf_counter() - tf0) * 1000)
                 t2b = time.perf_counter()  # baseline after the optional features stage, before policy
 
@@ -602,7 +620,7 @@ def main() -> None:
                     }
                     if emitted:
                         stage_ms["emit"] = stats["send"][-1]
-                    if feature_extractor is not None:
+                    if feature_extractor is not None or use_pose_features:
                         stage_ms["features"] = stats["features"][-1]
                     control.publish(
                         frame_jpeg=jpeg,

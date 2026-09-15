@@ -68,25 +68,25 @@ class Animator:
             # Supersede from the current rects, not frm, so motion stays
             # smooth — unless the shape just changed (single vs split).
             start_from = current if current is not None and len(current) == len(to) else frm
-            self._job = (start_from, to, time.monotonic(), max(duration_ms, 1.0), apply_fn)
+            self._job = (start_from, to, time.perf_counter(), max(duration_ms, 1.0), apply_fn)
 
     def _run(self) -> None:
-        next_tick = time.monotonic()
+        next_tick = time.perf_counter()
         while not self._stop.is_set():
             with self._lock:
                 job = self._job
             if job is not None:
                 self._tick(job)
             next_tick += self._period
-            sleep_for = next_tick - time.monotonic()
+            sleep_for = next_tick - time.perf_counter()
             if sleep_for > 0:
                 time.sleep(sleep_for)
             else:
-                next_tick = time.monotonic()
+                next_tick = time.perf_counter()
 
     def _tick(self, job: _Job) -> None:
         frm, to, start_time, duration_ms, apply_fn = job
-        t = 1.0 if duration_ms <= 0 else (time.monotonic() - start_time) * 1000.0 / duration_ms
+        t = 1.0 if duration_ms <= 0 else (time.perf_counter() - start_time) * 1000.0 / duration_ms
         # Identity, not a t=1.0 lerp: floating-point round-trip through
         # lerp/ease is not guaranteed bit-exact, and the last tick must be.
         if t >= 1.0:

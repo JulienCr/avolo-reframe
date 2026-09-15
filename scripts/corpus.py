@@ -11,9 +11,9 @@ import hashlib
 import json
 import math
 import statistics
+import sys
 
-from adapters.detect_vision import VisionDetector
-from adapters.detector import Detector, to_source_rect
+from adapters.detector import build_detector, to_source_rect
 from adapters.video import VideoFrames
 from core.geometry import Rect, clamp_to_source, expand, fit_ratio, union
 from core.policy import PolicyParams, PolicyState, initial_state, step
@@ -30,8 +30,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--start", type=float, default=None)
     parser.add_argument("--duration", type=float, default=None)
-    parser.add_argument("--detector", choices=("pose", "vision"), default="vision")
+    parser.add_argument(
+        "--detector", choices=("pose", "vision", "yolo"), default="vision" if sys.platform == "darwin" else "yolo"
+    )
     parser.add_argument("--upper-body", action="store_true")
+    parser.add_argument("--yolo-model", default="models/yolo11m-pose.pt", help="Chemin du modèle yolo (.pt ou .engine).")
     parser.add_argument("--out", required=True)
     parser.add_argument("--summary-json", default=None, help="Écrit aussi l'agrégat en JSON (voir tests/corpus/README.md).")
     parser.add_argument("--margin", type=float, default=defaults.margin)
@@ -42,14 +45,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--snap", action="store_true")
     parser.add_argument("--hold-ms", type=float, default=defaults.hold_ms)
     return parser.parse_args()
-
-
-def build_detector(name: str, upper_body: bool) -> Detector:
-    if name == "pose":
-        from adapters.detect_pose import PoseDetector
-
-        return PoseDetector(bust=upper_body)
-    return VisionDetector(upper_body=upper_body)
 
 
 def sha256_16(path: str) -> str:
@@ -256,7 +251,12 @@ def main() -> None:
     args = parse_args()
     video = VideoFrames(args.clip, fps=args.fps, width=args.width, start_s=args.start, duration_s=args.duration)
     probe = video.probe()
-    detector = build_detector(args.detector, args.upper_body)
+    if args.yolo_model.endswith(".engine"):
+        print(
+            "Attention : un moteur TensorRT n'est pas garanti déterministe et est lié à ce "
+            "GPU/pilote, alors que la référence du corpus est produite en .pt."
+        )
+    detector = build_detector(args.detector, args.upper_body, args.yolo_model)
 
     p = PolicyParams(
         source_w=probe["width"],
@@ -277,6 +277,9 @@ def main() -> None:
         "probe": probe,
         "params": {name: getattr(p, name) for name in p.__dataclass_fields__},
         "detector": detector.name,
+        "yolo_model": getattr(detector, "model_path", None),
+        "yolo_imgsz": getattr(detector, "imgsz", None),
+        "yolo_conf": getattr(detector, "conf", None),
         "fps": args.fps,
         # probe["fps"] is the source's native rate; fps is what we sample it
         # at, so decimation says how many source frames each sample skips.
@@ -295,7 +298,7 @@ def main() -> None:
     }
     head: dict = {"n_checked": 0, "n_cut": 0, "n_unreachable": 0, "margins": []}
 
-    with open(args.out, "w") as out:
+    with open(args.out, "w", newline="\n") as out:
         out.write(json.dumps(header) + "\n")
         for frame in video:
             boxes = detector.detect(frame.jpeg)
@@ -347,7 +350,7 @@ def main() -> None:
 
     print_summary(n_frames, n_detections, moves, detector.name, degeneracy, head)
     if args.summary_json:
-        with open(args.summary_json, "w") as f:
+        with open(args.summary_json, "w", newline="\n") as f:
             json.dump(summary_dict(header, n_frames, n_detections, moves, degeneracy, head), f, indent=2)
             f.write("\n")
 

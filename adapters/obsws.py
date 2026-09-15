@@ -98,12 +98,12 @@ class ObsWs:
                 delay = min(delay * 2, _BACKOFF_CAP)
         raise ObsWsError(f"could not reconnect to {self._url}: {last_error}")
 
-    def request(self, request_type: str, data: dict | None = None) -> dict:
+    def request(self, request_type: str, data: dict | None = None, timeout: float | None = None) -> dict:
         ws = self._require_connected()
         request_id = str(next(self._ids))
         d = {"requestType": request_type, "requestId": request_id, "requestData": data or {}}
         ws.send(json.dumps({"op": _OP_REQUEST, "d": d}))
-        resp = self._await(_OP_REQUEST_RESPONSE, lambda d: d.get("requestId") == request_id)
+        resp = self._await(_OP_REQUEST_RESPONSE, lambda d: d.get("requestId") == request_id, timeout=timeout)
         return self._unwrap(resp)
 
     def request_batch(
@@ -165,13 +165,13 @@ class ObsWs:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         return base64.b64encode(digest).decode("utf-8")
 
-    def _await(self, op: int, matches) -> dict:
-        return self._recv_op(self._require_connected(), op, matches)
+    def _await(self, op: int, matches, timeout: float | None = None) -> dict:
+        return self._recv_op(self._require_connected(), op, matches, timeout=timeout)
 
-    def _recv_op(self, ws: ClientConnection, op: int, matches) -> dict:
-        deadline = time.monotonic() + self._timeout
+    def _recv_op(self, ws: ClientConnection, op: int, matches, timeout: float | None = None) -> dict:
+        deadline = time.perf_counter() + (timeout if timeout is not None else self._timeout)
         while True:
-            remaining = deadline - time.monotonic()
+            remaining = deadline - time.perf_counter()
             if remaining <= 0:
                 raise ObsWsError(f"timed out waiting for op {op}")
             try:

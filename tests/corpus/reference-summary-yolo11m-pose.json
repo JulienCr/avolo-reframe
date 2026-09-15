@@ -1,0 +1,53 @@
+{
+  "source": {
+    "clip_sha256_16": "b172c72d8b9c9e33",
+    "probe": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 60.0,
+      "duration_s": 698.0
+    },
+    "params": {
+      "source_w": 1920,
+      "source_h": 1080,
+      "ratio": 0.5625,
+      "margin": 0.18,
+      "min_crop_h": 960.0,
+      "dead_zone": 0.12,
+      "dwell_ms": 400.0,
+      "ease_ms": 320.0,
+      "snap": false,
+      "hold_ms": 1500.0,
+      "split_enabled": true,
+      "split_min_gap": 0.15,
+      "split_enter_ms": 600.0,
+      "split_exit_ms": 3000.0,
+      "track_hold_ms": 6000.0,
+      "eye_line": 0.33,
+      "max_zoom": 1.5,
+      "zoom_dead_zone": 0.25
+    },
+    "detector": "yolo-yolo11m-pose",
+    "yolo_model": "models\\yolo11m-pose.pt",
+    "yolo_imgsz": 640,
+    "yolo_conf": 0.25,
+    "fps": 12.0,
+    "decimation": 5.0,
+    "width": 640,
+    "start_s": null,
+    "duration_s": null
+  },
+  "images": 8376,
+  "taux_detection": 0.997,
+  "commandes": 386,
+  "images_2_corps_ou_plus": 4084,
+  "part_2_corps": 0.4876,
+  "degenerate": 0.8951,
+  "crane_coupe": {
+    "cellules_verifiees": 8338,
+    "taux_coupe": 0.0,
+    "marge_mediane_px": 79.3,
+    "marge_p10_px": 27.9,
+    "crane_hors_source_exclu": 971
+  }
+}

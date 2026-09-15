@@ -4,34 +4,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## État du dépôt
 
-Un PoC macOS qui tourne, et trois documents :
+Un PoC macOS qui tourne, un portage Windows qui tourne sur la cible, et quatre
+documents :
 
 - [`docs/adr/0001-avolo-reframe.md`](docs/adr/0001-avolo-reframe.md) — la décision d'architecture. À lire avant d'écrire quoi que ce soit.
 - [`docs/recadrage-live-references.md`](docs/recadrage-live-references.md) — le dossier de sources (API obs-websocket, état de l'écosystème, chiffres de détection).
-- [`docs/poc-mac-webcam.md`](docs/poc-mac-webcam.md) — **tout ce qui a été mesuré sur machine**. À lire avant d'affirmer un chiffre.
+- [`docs/poc-mac-webcam.md`](docs/poc-mac-webcam.md) — **tout ce qui a été mesuré sur le Mac**. À lire avant d'affirmer un chiffre côté Vision.
+- [`docs/poc-windows.md`](docs/poc-windows.md) — **tout ce qui a été mesuré sur la cible**. À lire avant d'affirmer un chiffre côté YOLO/TensorRT ou obs-websocket sur Windows.
 - [`TODO.md`](TODO.md) — ce qui reste, et surtout ce qui est **tranché** : à lire avant de rouvrir un débat.
 - [`tests/corpus/`](tests/corpus/README.md) — le corpus de cas de contrôle : trace de référence, images de l'extrait, outils de mesure. À comparer après tout changement de politique.
 
-Le PoC est en **Python 3.12** (`uv`), avec Apple Vision comme détecteur. Ça ne tranche **pas** le langage du cœur en production, volontairement ouvert par l'ADR (C++ direct si la cible reste le direct seul, Rust en ABI C s'il doit aussi servir Node) : `core/` est en fonctions pures sur des `dataclass` de flottants, transposable. Ne pas choisir à la place de l'ADR — poser la question.
+Le PoC est en **Python 3.12** (`uv`), avec Apple Vision comme détecteur sur macOS et YOLO11-pose sur Windows. Ça ne tranche **pas** le langage du cœur en production, volontairement ouvert par l'ADR (C++ direct si la cible reste le direct seul, Rust en ABI C s'il doit aussi servir Node) : `core/` est en fonctions pures sur des `dataclass` de flottants, transposable. Ne pas choisir à la place de l'ADR — poser la question.
 
-## La machine de mesure n'est pas la cible
+## La cible a maintenant ses propres mesures
 
-Tout ce qui est mesuré à ce jour l'a été sur un **MacBook Pro M3**. La cible est **Windows 11, i9-14900K, RTX 4090**.
+La cible de production est **Windows 11, i9-14900K, RTX 4090** — mesurée le 15 septembre 2026, détail dans [`docs/poc-windows.md`](docs/poc-windows.md). Ce qui a été mesuré sur le **MacBook Pro M3** ([`docs/poc-mac-webcam.md`](docs/poc-mac-webcam.md)) reste antérieur et distinct.
 
-**Apple Vision n'existe pas sur Windows** : le détecteur du PoC est un outil de développement, pas un choix de production — là-bas ce sera YOLO11-pose en TensorRT ou Maxine. Ne jamais citer une latence de détection de ce dépôt comme valant pour la cible. Ce qui se transpose : la chaîne obs-websocket, la politique, la géométrie. Ce qui ne se transpose pas : le détecteur, `macos-avcapture` (→ `dshow_input`), et tout ce qui touche à Center Stage.
+**Apple Vision n'existe pas sur Windows** : ses latences ne valent toujours que pour la machine de développement, jamais pour la cible. **Les chiffres YOLO/TensorRT, eux, sont des chiffres de cible** — ils décident directement de ce que la production peut tenir. Ce qui se transpose du Mac : la chaîne obs-websocket, la politique, la géométrie. Ce qui ne se transpose pas : le détecteur, `macos-avcapture` (→ `dshow_input` sur Windows), et tout ce qui touche à Center Stage.
 
 ## Commandes
 
 ```bash
-uv sync                                          # environnement
-uv run pytest                                    # les cas de contrôle du cœur
-uv run python -m scripts.probe                   # go/no-go + latences, sort 0 si tout passe
-uv run python -m scripts.setup_scene --force     # (re)construit la scène ; source = la vidéo de test
-uv run python -m scripts.setup_scene --force --camera   # idem, mais sur la caméra
-uv run python -m scripts.run --upper-body        # la boucle
-uv run python -m scripts.run --upper-body --features    # + overlay des traits dans OBS (~25 ms/image en plus)
-uv run python -m scripts.corpus tests/fixtures/lab-avolo-58m22-70m00.mp4 \
-    --upper-body --fps 12 --out trace.jsonl      # rejeu déterministe hors OBS
+make sync              # environnement (uv sync)
+make check             # ruff F821 + pytest, à lancer avant toute exécution
+make model             # télécharge les poids YOLO
+make engine            # exporte en moteur TensorRT fp16, lié à ce GPU et à ce pilote
+make probe             # go/no-go + latences, sort 0 si tout passe
+make setup             # (re)construit la scène sur la vidéo de test
+make run ARGS="--upper-body"   # la boucle
+make corpus            # rejeu déterministe hors OBS ; voir tests/corpus/README.md
+```
+
+Formes `uv run` sous-jacentes, pour deux commandes clés :
+
+```bash
+uv run python -m scripts.probe                   # équivalent de make probe
+uv run python -m scripts.run --upper-body --features    # + overlay des traits dans OBS (~25 ms/image sur macOS, négligeable ailleurs)
 ```
 
 **La source par défaut est la vidéo de test, pas la caméra.** Une caméra rend chaque exécution différente, donc deux mesures ne sont plus comparables. `--camera` pour rebasculer.
@@ -68,12 +76,23 @@ Elles viennent d'`avolo-shorts` et ont été mesurées là-bas :
 
 Les trois points sont vérifiés par la mesure sur OBS 32.2.2 / obs-websocket 5.7.4. Rejouable par `uv run python -m scripts.probe`. **La voie hors processus tient.**
 
-Aitum Vertical 1.6.4 a depuis été installé, et le canevas vertical est **lui aussi** pilotable : crop relu à l'identique par `sceneUuid`. À refaire sur la machine de production avant d'y engager quoi que ce soit.
+Aitum Vertical 1.6.4 a depuis été installé, et le canevas vertical est **lui aussi** pilotable : crop relu à l'identique par `sceneUuid`.
+
+**Rejoué sur la machine de production le 15 septembre 2026** — `make probe` y sort 0, Aitum Vertical installé et son canevas visible par `GetCanvasList`. Détail dans [`docs/poc-windows.md`](docs/poc-windows.md).
 
 Deux faits qui en sortent et qui ne sont pas dans l'ADR d'origine :
 
 - **Aucune requête `CreateCanvas` n'existe**, et l'interface d'OBS n'en crée pas non plus. L'adaptateur sait adresser un canevas, pas en créer un.
 - **L'ouverture d'une caméra bloque le fil de rendu d'OBS plusieurs secondes**, et `GetSourceScreenshot` est servi par ce fil. La boucle doit survivre à une source d'images muette.
+
+## Pièges Windows à ne pas rouvrir
+
+Détail et mesures dans [`docs/poc-windows.md`](docs/poc-windows.md).
+
+- **`time.perf_counter()`, jamais `time.monotonic()`** : sur Windows + Python 3.12, `monotonic()` avance par paliers de 15,6 ms.
+- **Ne jamais interroger la scène de programme quand elle peut être vide** — un `GetCurrentProgramScene` sur un programme vide a coïncidé avec un plantage d'OBS.
+- `setup_scene` et `probe` basculent sur la collection de scènes dédiée « AVOLO Reframe » et y laissent OBS : la collection quittée (affichée) se rouvre à la main. Ne jamais modifier les collections de production.
+- **Le corpus se rejoue en `.pt`, la boucle en direct peut tourner en `.engine`** : un moteur TensorRT n'est pas garanti déterministe et est lié au couple GPU + pilote qui l'a produit.
 
 ## Mesure
 

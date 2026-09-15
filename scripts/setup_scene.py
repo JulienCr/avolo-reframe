@@ -9,12 +9,14 @@ import time
 from pathlib import Path
 
 from adapters.obsws import ObsWs, ObsWsError
+from scripts.collection import ensure_scene_collection
 from scripts.layout import (
     BG_NAME,
     CAM_KIND,
     CAM_NAME,
     CANVAS_H,
     CANVAS_W,
+    COLLECTION_NAME,
     CONTROL_H,
     CONTROL_W,
     CONTROL_X,
@@ -30,6 +32,8 @@ from scripts.layout import (
 from scripts.run import DEFAULT_CONFIG_PATH, DEFAULT_CONTROL_PORT, apply_config
 
 SETUP_SCENE_CONFIG_DESTS = {"url", "password", "control_port", "media_file", "camera"}
+
+_DEVICE_PROPERTY = "video_device_id" if CAM_KIND == "dshow_input" else "device"
 
 BG_COLOR = 0xFF1E1E1E
 OVERLAY_NAME = "RF Overlay"
@@ -150,7 +154,7 @@ def set_camera_view(obs: ObsWs, item_id: int, x: float, y: float, w: float, h: f
 def pick_device(obs: ObsWs, substring: str | None) -> dict:
     items = obs.request(
         "GetInputPropertiesListPropertyItems",
-        {"inputName": CAM_NAME, "propertyName": "device"},
+        {"inputName": CAM_NAME, "propertyName": _DEVICE_PROPERTY},
     )["propertyItems"]
 
     if substring:
@@ -207,8 +211,8 @@ def check_center_stage(device_uuid: str, allow: bool) -> None:
 
 
 def wait_for_resolution(obs: ObsWs, item_id: int) -> tuple[int, int]:
-    deadline = time.monotonic() + POLL_TIMEOUT_S
-    while time.monotonic() < deadline:
+    deadline = time.perf_counter() + POLL_TIMEOUT_S
+    while time.perf_counter() < deadline:
         transform = obs.request(
             "GetSceneItemTransform", {"sceneName": SCENE_NAME, "sceneItemId": item_id}
         )["sceneItemTransform"]
@@ -314,9 +318,15 @@ def build_scene(
         print(f"Source choisie : fichier vidéo en boucle ({media_file})")
     else:
         chosen = pick_device(obs, device)
-        obs.request("SetInputSettings", {"inputName": CAM_NAME, "inputSettings": {"device": chosen["itemValue"]}})
+        obs.request(
+            "SetInputSettings",
+            {"inputName": CAM_NAME, "inputSettings": {_DEVICE_PROPERTY: chosen["itemValue"]}},
+        )
         print(f"Caméra choisie : {normalize(chosen['itemName'])} ({chosen['itemValue']})")
-        check_center_stage(chosen["itemValue"], allow_center_stage)
+        if sys.platform == "darwin":
+            check_center_stage(chosen["itemValue"], allow_center_stage)
+        else:
+            print("Center Stage : non applicable (spécifique à macOS).")
 
     set_camera_view(obs, control_item, CONTROL_X, CONTROL_Y, CONTROL_W, CONTROL_H)
 
@@ -369,12 +379,30 @@ def main() -> None:
 
     try:
         with ObsWs(url=args.url, password=args.password) as obs:
+            ensure_scene_collection(obs, COLLECTION_NAME)
             if scene_exists(obs):
                 if not args.force:
                     print(f"La scène « {SCENE_NAME} » existe déjà. Relancez avec --force pour la reconstruire.")
                     sys.exit(1)
                 teardown_existing_scene(obs)
-            build_scene(obs, args.device, args.allow_center_stage, media_file, args.control_port)
+            try:
+                build_scene(obs, args.device, args.allow_center_stage, media_file, args.control_port)
+            except ObsWsError as exc:
+                print(f"Erreur OBS : {exc}")
+                # A camera pick or property lookup can fail mid-build, leaving
+                # the scene and its sources half-created: clean up before exiting.
+                if scene_exists(obs):
+                    teardown_existing_scene(obs)
+                sys.exit(1)
+            except SystemExit as exc:
+                # pick_device, the Center Stage guard and wait_for_resolution
+                # exit(1) directly, bypassing the except above: clean up here too.
+                if exc.code not in (0, None) and scene_exists(obs):
+                    try:
+                        teardown_existing_scene(obs)
+                    except ObsWsError as cleanup_exc:
+                        print(f"Erreur OBS pendant le nettoyage : {cleanup_exc}")
+                raise
     except ObsWsError as exc:
         print(f"Erreur OBS : {exc}")
         sys.exit(1)

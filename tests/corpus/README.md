@@ -10,7 +10,8 @@ Récupéré du scratchpad de session le 12 septembre 2026 — il aurait été ef
 
 | Dossier | Quoi | À versionner |
 |---|---|---|
-| `reference-summary.json` | l'agrégat d'un rejeu complet, ~900 octets | **oui** |
+| `reference-summary.json` | l'agrégat d'un rejeu complet, détecteur Vision, ~900 octets | **oui** |
+| `reference-summary-yolo11m-pose.json` | le même agrégat, détecteur YOLO, pour comparer les deux sur le même extrait | **oui** |
 | `traces/` | les traces JSONL brutes, ~5,7 Mo pièce | non |
 | `frames/` | 39 images échantillonnées de l'extrait, 1 Mo | oui |
 | `tools/` | les scripts d'analyse et de vérification | oui |
@@ -25,6 +26,14 @@ Chiffres au 13 septembre 2026, **détecteur `pose`** (le précédent, `vision-up
 ne fournit aucune estimation de crâne) : 8 376 images, détection 99,4 %,
 355 commandes, **45,6 % d'images à deux corps ou plus**, dont 3 415 cadrées
 entre les sujets et 4 626 sur un sujet.
+
+`reference-summary-yolo11m-pose.json` porte le même rejeu, **détecteur YOLO11-
+pose `.pt`**, mesuré le 15 septembre 2026 sur la machine de production
+(Windows, RTX 4090) : 8 376 images, détection 99,7 %, 386 commandes, 48,76 %
+d'images à deux corps ou plus. Il compare au fichier Vision ci-dessus sur le
+même extrait et les mêmes paramètres — c'est ce qui valide le remap
+d'articulations COCO-17 → Vision. Détail dans
+[`docs/poc-windows.md`](../../docs/poc-windows.md).
 
 Nouveau : **`crane_coupe`**, la mesure qui aurait attrapé le défaut de coupe de
 tête du 12-13 septembre — sur le cadre **appliqué**, pas la cible calculée, qui
@@ -47,8 +56,13 @@ p10 +29px ; 978 cas exclus où le crâne estimé tombe lui-même hors de la sour
 **Régénérables**, à condition d'avoir l'extrait :
 
 ```bash
-uv run python -m scripts.corpus tests/fixtures/lab-avolo-58m22-70m00.mp4 \
-    --detector pose --fps 12 --out trace.jsonl --summary-json summary.json
+make corpus ARGS="--detector pose"
+```
+
+Forme `uv run` équivalente, sur une seule ligne :
+
+```bash
+uv run python -m scripts.corpus tests/fixtures/lab-avolo-58m22-70m00.mp4 --detector pose --fps 12 --out trace.jsonl --summary-json summary.json
 ```
 
 75 s pour 698 s de vidéo, et **deux rejeux donnent une sortie identique au bit

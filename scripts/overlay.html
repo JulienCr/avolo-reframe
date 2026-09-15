@@ -17,7 +17,7 @@
     position: fixed;
     left: 12px;
     bottom: 12px;
-    font: 13px/1.4 -apple-system, sans-serif;
+    font: 13px/1.4 -apple-system, 'Segoe UI', sans-serif;
     color: #fff;
     background: rgba(20, 20, 20, 0.72);
     padding: 6px 10px;
@@ -104,7 +104,7 @@
   }
 
   function drawLabel(text, x, y) {
-    ctx.font = "13px -apple-system, sans-serif";
+    ctx.font = "13px -apple-system, 'Segoe UI', sans-serif";
     const padding = 4;
     const w = ctx.measureText(text).width + padding * 2;
     ctx.fillStyle = "rgba(15, 15, 15, 0.6)";
@@ -218,7 +218,7 @@
 
   function drawModeLabel(mode, detectorName) {
     const text = `mode ${mode} · détecteur ${detectorName}`;
-    ctx.font = "13px -apple-system, sans-serif";
+    ctx.font = "13px -apple-system, 'Segoe UI', sans-serif";
     const w = ctx.measureText(text).width + 8;
     const x = window.innerWidth - w - 18;
     drawLabel(text, x, 20);
@@ -248,7 +248,7 @@
     ];
     const x0 = 12;
     let y = 20;
-    ctx.font = "12px -apple-system, sans-serif";
+    ctx.font = "12px -apple-system, 'Segoe UI', sans-serif";
     const width = 130;
     ctx.fillStyle = "rgba(15, 15, 15, 0.55)";
     ctx.fillRect(x0 - 6, y - 14, width, items.length * 18 + 6);
