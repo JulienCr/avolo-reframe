@@ -2,6 +2,7 @@
 __pycache__/
 .pytest_cache/
 .DS_Store
+models/
 
 # Artefacts de test locaux, non versionnes
 reframe.toml
