@@ -14,7 +14,8 @@ import time
 from pathlib import Path
 
 from adapters.frames import FrameSource
-from adapters.obsws import ObsWs, ObsWsError, ensure_scene_collection
+from adapters.obsws import ObsWs, ObsWsError
+from scripts.collection import ensure_scene_collection
 from scripts.layout import COLLECTION_NAME
 from scripts.run import DEFAULT_CONFIG_PATH, apply_config
 

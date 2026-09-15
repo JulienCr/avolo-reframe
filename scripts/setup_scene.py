@@ -8,7 +8,8 @@ import sys
 import time
 from pathlib import Path
 
-from adapters.obsws import ObsWs, ObsWsError, ensure_scene_collection
+from adapters.obsws import ObsWs, ObsWsError
+from scripts.collection import ensure_scene_collection
 from scripts.layout import (
     BG_NAME,
     CAM_KIND,
@@ -210,8 +211,8 @@ def check_center_stage(device_uuid: str, allow: bool) -> None:
 
 
 def wait_for_resolution(obs: ObsWs, item_id: int) -> tuple[int, int]:
-    deadline = time.monotonic() + POLL_TIMEOUT_S
-    while time.monotonic() < deadline:
+    deadline = time.perf_counter() + POLL_TIMEOUT_S
+    while time.perf_counter() < deadline:
         transform = obs.request(
             "GetSceneItemTransform", {"sceneName": SCENE_NAME, "sceneItemId": item_id}
         )["sceneItemTransform"]
@@ -393,6 +394,15 @@ def main() -> None:
                 if scene_exists(obs):
                     teardown_existing_scene(obs)
                 sys.exit(1)
+            except SystemExit as exc:
+                # pick_device, the Center Stage guard and wait_for_resolution
+                # exit(1) directly, bypassing the except above: clean up here too.
+                if exc.code not in (0, None) and scene_exists(obs):
+                    try:
+                        teardown_existing_scene(obs)
+                    except ObsWsError as cleanup_exc:
+                        print(f"Erreur OBS pendant le nettoyage : {cleanup_exc}")
+                raise
     except ObsWsError as exc:
         print(f"Erreur OBS : {exc}")
         sys.exit(1)
