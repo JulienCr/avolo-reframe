@@ -14,3 +14,7 @@ RATIO = OUTPUT_W / OUTPUT_H
 
 CAM_KIND = "dshow_input" if sys.platform == "win32" else "macos-avcapture"
 MEDIA_KIND = "ffmpeg_source"
+AVOCAM_KIND = "avolocam_source"
+# The AvoCam plugin reports this as get_width/get_height (its test pattern)
+# until the first decoded frame arrives, even though the source is live.
+AVOCAM_PLACEHOLDER_SIZE = (1920, 1080)

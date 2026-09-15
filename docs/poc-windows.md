@@ -231,6 +231,17 @@ se rouvre à la main.
 - `setup_scene --camera` utilise `dshow_input` (propriété `video_device_id`)
   sur Windows, à la place de `macos-avcapture`. **Non testé en direct avec
   une caméra** à ce jour — seul le rejeu sur la vidéo de test est vérifié.
+- Avec `avocam_ip` configuré, `--camera` crée à la place une source
+  `avolocam_source` (`manual_ip`, `manual_port`) : le plugin AvoCam ne
+  démarre la réception que scène en programme, donc `setup_scene` bascule
+  la scène en direct après l'avoir construite. Il refuse de construire si
+  une autre source AvoCam retient déjà le même port UDP — le plugin ne le
+  libère qu'à la suppression de cette source. Le plugin annonce 1920x1080 (la
+  taille de son motif de test) tant qu'aucune image n'est décodée ; `setup_scene`
+  et `scripts.run` en tiennent compte désormais, plutôt que de la prendre pour la
+  vraie résolution de l'iPhone. `min_crop_h` et la distance de référence de
+  `--ease-ms` sont exprimés en pixels d'une source 1080p et mis à l'échelle
+  selon la hauteur réelle de la source.
 - Un `Makefile` centralise les commandes (`make` liste les cibles) :
   `sync`, `check`, `test`, `model`, `engine`, `bench`, `probe`, `setup`,
   `setup-camera`, `run`, `corpus`. `ARGS="..."` passe des options

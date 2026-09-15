@@ -8,7 +8,7 @@ from core.geometry import (
     to_crop,
     union,
 )
-from core.policy import PolicyParams, PolicyState, initial_state, step
+from core.policy import PolicyParams, PolicyState, height_floor, initial_state, step
 
 
 def _target(boxes: list[Rect], p: PolicyParams) -> Rect:
@@ -476,6 +476,17 @@ def test_max_zoom_caps_the_crop_height():
     state, cmd = step(state, [box], p.dwell_ms, p)
     assert cmd is not None
     assert abs(cmd.target.h - p.source_h / p.max_zoom) < 1e-9
+
+
+def test_height_floor_is_unchanged_at_1080p():
+    p = PolicyParams(source_w=1920, source_h=1080, min_crop_h=960.0)
+    assert height_floor(p) == 960.0
+
+
+def test_height_floor_scales_with_source_height():
+    p_1080 = PolicyParams(source_w=1920, source_h=1080, min_crop_h=960.0)
+    p_4k = PolicyParams(source_w=3840, source_h=2160, min_crop_h=960.0)
+    assert abs(height_floor(p_4k) - 2 * height_floor(p_1080)) < 1e-9
 
 
 # --- bust cells and the crown invariant -------------------------------------
