@@ -34,6 +34,11 @@ SCENE_CHECK_INTERVAL_S = 2.0
 SCENE_RESOLUTION_TIMEOUT_S = 3.0
 SCENE_RESOLUTION_POLL_S = 0.1
 
+
+class SceneNotReady(Exception):
+    """Scene items missing, incomplete, or mid-rebuild; message is the French line to print."""
+
+
 DEFAULT_CONFIG_PATH = Path("reframe.toml")
 # TOML has no null: password/log/media_file/avocam_ip use "" for "not set", converted below.
 _NULLABLE_STRING_KEYS = {"password", "log", "media_file", "avocam_ip"}
@@ -227,24 +232,35 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int]:
-    """Return (control_id, output_id, cell_top_id, cell_bottom_id).
+def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int, str]:
+    """Return (control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid).
 
     Distinguished by bounds only, never by creation order: boundsWidth
     separates control from the three OUTPUT_W items, boundsHeight then
     separates the single output (OUTPUT_H) from the two cells (half that),
-    and positionY separates the top cell from the bottom one.
+    and positionY separates the top cell from the bottom one. cam_uuid is
+    the sourceUuid shared by all four CAM_NAME items: a rebuild recreates
+    the RF Cam input under the same name but a fresh uuid, which is what
+    lets a caller tell a live scene from a rebuilt one with reused ids.
     """
     items = obs.request("GetSceneItemList", {"sceneName": scene})["sceneItems"]
-    cam_ids = [i["sceneItemId"] for i in items if i["sourceName"] == CAM_NAME]
+    cam_items = [i for i in items if i["sourceName"] == CAM_NAME]
 
-    if len(cam_ids) != 4:
-        print(
-            f"Scène « {scene} » incomplète (attendu 4 items {CAM_NAME}, trouvé {len(cam_ids)}). "
+    if len(cam_items) != 4:
+        raise SceneNotReady(
+            f"Scène « {scene} » incomplète (attendu 4 items {CAM_NAME}, trouvé {len(cam_items)}). "
             "Lancez d'abord setup_scene --force."
         )
-        sys.exit(1)
 
+    cam_uuids = {i["sourceUuid"] for i in cam_items}
+    if len(cam_uuids) != 1:
+        raise SceneNotReady(
+            f"Scène « {scene} » : les items {CAM_NAME} référencent des sources différentes "
+            "(reconstruction en cours ?). Nouvel essai."
+        )
+    cam_uuid = cam_uuids.pop()
+
+    cam_ids = [i["sceneItemId"] for i in cam_items]
     transforms = {
         cam_id: obs.request("GetSceneItemTransform", {"sceneName": scene, "sceneItemId": cam_id})[
             "sceneItemTransform"
@@ -256,15 +272,14 @@ def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int]:
     cell_ids = [i for i, t in transforms.items() if t["boundsWidth"] == OUTPUT_W and t["boundsHeight"] == OUTPUT_H / 2]
 
     if len(control_ids) != 1 or len(output_ids) != 1 or len(cell_ids) != 2:
-        print(
+        raise SceneNotReady(
             f"Impossible d'identifier les items {CAM_NAME} par leurs bounds "
             f"(contrôle={len(control_ids)} sortie={len(output_ids)} cellules={len(cell_ids)}). "
             "Relancez setup_scene --force."
         )
-        sys.exit(1)
 
     cell_top_id, cell_bottom_id = sorted(cell_ids, key=lambda i: transforms[i]["positionY"])
-    return control_ids[0], output_ids[0], cell_top_id, cell_bottom_id
+    return control_ids[0], output_ids[0], cell_top_id, cell_bottom_id, cam_uuid
 
 
 def source_size(obs: ObsWs, scene: str, control_id: int) -> tuple[int, int]:
@@ -274,33 +289,56 @@ def source_size(obs: ObsWs, scene: str, control_id: int) -> tuple[int, int]:
     return transform["sourceWidth"], transform["sourceHeight"]
 
 
-def resolve_scene(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int, int]:
-    """(control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h).
+def resolve_scene(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int, int, str]:
+    """(control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h, cam_uuid).
 
     A scene rebuilt moments ago may not have renegotiated a resolution yet:
     poll briefly rather than handing back 0x0, which a caller later divides by.
     """
-    control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, scene)
+    control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid = find_scene_items(obs, scene)
     deadline = time.perf_counter() + SCENE_RESOLUTION_TIMEOUT_S
     source_w, source_h = source_size(obs, scene, control_id)
     while (not source_w or not source_h) and time.perf_counter() < deadline:
         time.sleep(SCENE_RESOLUTION_POLL_S)
         source_w, source_h = source_size(obs, scene, control_id)
     if not source_w or not source_h:
-        print(f"Scène « {scene} » : résolution jamais renégociée après reconstruction. Relancez scripts.run.")
-        sys.exit(1)
-    return control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+        raise SceneNotReady(
+            f"Scène « {scene} » : résolution jamais renégociée après reconstruction. Relancez scripts.run."
+        )
+    return control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h, cam_uuid
 
 
-def scene_items_match(obs: ObsWs, scene: str, ids: tuple[int, int, int, int]) -> bool:
-    """True when every cached id still names a CAM_NAME item in scene.
+def cam_items_match(items: list[dict], ids: tuple[int, int, int, int], cam_uuid: str) -> bool:
+    """Pure: True when every id in ids names a CAM_NAME item carrying cam_uuid, in a
+    GetSceneItemList-shaped list.
 
-    A rebuild can reuse the same numeric ids for a different source: this
-    checks sourceName, not just presence, which is what a stale id hides.
+    A rebuild can reuse the same numeric ids and the same source name for a
+    fresh input: sourceUuid is what actually changes, which name/id alone hide.
     """
+    by_id = {i["sceneItemId"]: i for i in items}
+    return all(
+        (item := by_id.get(item_id)) is not None
+        and item["sourceName"] == CAM_NAME
+        and item.get("sourceUuid") == cam_uuid
+        for item_id in ids
+    )
+
+
+def scene_items_match(obs: ObsWs, scene: str, ids: tuple[int, int, int, int], cam_uuid: str) -> bool:
     items = obs.request("GetSceneItemList", {"sceneName": scene})["sceneItems"]
-    names = {i["sceneItemId"]: i["sourceName"] for i in items}
-    return all(names.get(item_id) == CAM_NAME for item_id in ids)
+    return cam_items_match(items, ids, cam_uuid)
+
+
+def report_scene_retry(scene: str, exc: Exception, last_error: str | None, next_log_at: float) -> tuple[str, float]:
+    """Rate-limited "scene unavailable" line, shared by the periodic check and the
+    reconnect handler: a stuck rebuild logs at most once per SCENE_CHECK_INTERVAL_S.
+    """
+    msg = str(exc)
+    now = time.perf_counter()
+    if msg != last_error or now >= next_log_at:
+        print(f"Scène « {scene} » indisponible ({msg}), nouvel essai.")
+        next_log_at = now + SCENE_CHECK_INTERVAL_S
+    return msg, next_log_at
 
 
 def crop_patch(rect: Rect, source_w: int, source_h: int) -> dict:
@@ -385,6 +423,14 @@ def apply_source_resize(
     )
     animator.jump((state.current,), single_apply_fn)
     return p, state, single_apply_fn, split_apply_fn
+
+
+def reapply_state(animator: Animator, state: PolicyState, single_apply_fn: ApplyFn, split_apply_fn: ApplyFn) -> None:
+    """Cut OBS back to the policy's current framing, e.g. onto freshly rebuilt, uncropped items."""
+    if state.mode == "split" and state.cells is not None:
+        animator.jump(state.cells, split_apply_fn)
+    else:
+        animator.jump((state.current,), single_apply_fn)
 
 
 def travel_distance(frm: Rect, to: Rect) -> float:
@@ -514,7 +560,7 @@ def main() -> None:
     obs = ObsWs(url=args.url, password=args.password)
     try:
         obs.connect()
-        control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, args.scene)
+        control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid = find_scene_items(obs, args.scene)
         source_w, source_h = source_size(obs, args.scene, control_id)
         cam_kind = obs.request("GetInputSettings", {"inputName": CAM_NAME})["inputKind"]
         if cam_kind == AVOCAM_KIND and (source_w, source_h) == AVOCAM_PLACEHOLDER_SIZE:
@@ -522,6 +568,9 @@ def main() -> None:
                 f"Attention : RF Cam annonce {source_w}x{source_h}, la taille du motif de test du plugin AvoCam -- "
                 "la boucle adoptera la vraie taille dès la première image reçue."
             )
+    except SceneNotReady as exc:
+        print(str(exc))
+        sys.exit(1)
     except ObsWsError as exc:
         print(f"Scène « {args.scene} » introuvable ou invalide ({exc}). Lancez d'abord setup_scene.")
         sys.exit(1)
@@ -591,27 +640,49 @@ def main() -> None:
     deadline = None if args.duration <= 0 else start + args.duration
     next_tick = start
     next_scene_check = start + SCENE_CHECK_INTERVAL_S
+    last_scene_error: str | None = None
+    next_scene_error_log = 0.0
+    connection_lost_logged = False
 
     try:
         while deadline is None or time.perf_counter() < deadline:
             try:
                 if time.perf_counter() >= next_scene_check:
                     ids = (control_id, output_id, cell_top_id, cell_bottom_id)
-                    if not scene_items_match(obs, args.scene, ids):
-                        print("Scène reconstruite pendant que la boucle tournait : ré-résolution des scene items.")
-                        control_id, output_id, cell_top_id, cell_bottom_id, new_source_w, new_source_h = (
-                            resolve_scene(obs, args.scene)
-                        )
-                        if (new_source_w, new_source_h) != (source_w, source_h):
-                            p, state, single_apply_fn, split_apply_fn = apply_source_resize(
-                                p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
-                                new_source_w, new_source_h,
+                    if not scene_items_match(obs, args.scene, ids, cam_uuid):
+                        # A half-built rebuild (setup_scene creating items over some ms) must
+                        # not kill the loop: retry locally, on the shared rate-limited line,
+                        # rather than falling through to the "Connexion OBS perdue" handler.
+                        try:
+                            (
+                                control_id, output_id, cell_top_id, cell_bottom_id,
+                                new_source_w, new_source_h, cam_uuid,
+                            ) = resolve_scene(obs, args.scene)
+                        except (SceneNotReady, ObsWsError) as resolve_exc:
+                            last_scene_error, next_scene_error_log = report_scene_retry(
+                                args.scene, resolve_exc, last_scene_error, next_scene_error_log
                             )
-                            source_w, source_h = new_source_w, new_source_h
+                            next_scene_check = time.perf_counter() + SCENE_RESOLUTION_POLL_S
                         else:
-                            single_apply_fn, split_apply_fn = build_apply_fns(
-                                args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                            print(
+                                "Scène reconstruite pendant que la boucle tournait : ré-résolution des scene items."
                             )
+                            if (new_source_w, new_source_h) != (source_w, source_h):
+                                p, state, single_apply_fn, split_apply_fn = apply_source_resize(
+                                    p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
+                                    new_source_w, new_source_h,
+                                )
+                                source_w, source_h = new_source_w, new_source_h
+                            else:
+                                single_apply_fn, split_apply_fn = build_apply_fns(
+                                    args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                                )
+                                reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                            if control is not None:
+                                control.set_connected(True)
+                            last_scene_error = None
+                            connection_lost_logged = False
+                            next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
                     else:
                         new_source_w, new_source_h = source_size(obs, args.scene, control_id)
                         if new_source_w and new_source_h and (new_source_w, new_source_h) != (source_w, source_h):
@@ -620,7 +691,7 @@ def main() -> None:
                                 new_source_w, new_source_h,
                             )
                             source_w, source_h = new_source_w, new_source_h
-                    next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
+                        next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
 
                 paused, action = False, None
                 if control is not None:
@@ -718,27 +789,44 @@ def main() -> None:
 
                 iterations += 1
             except ObsWsError as exc:
-                print(f"Connexion OBS perdue ({exc}), reconnexion...")
+                # At most one line per failure episode: a scene mid-rebuild makes
+                # frame grabs fail too, which would otherwise reprint this every tick.
+                if not connection_lost_logged:
+                    print(f"Connexion OBS perdue ({exc}), reconnexion...")
+                    connection_lost_logged = True
                 if control is not None:
                     control.set_connected(False)
                 obs.ensure_connected()
                 # Re-resolving ids alone is not enough: single/split_apply_fn
                 # close over the old ones by value and must be rebuilt too.
-                control_id, output_id, cell_top_id, cell_bottom_id, new_source_w, new_source_h = resolve_scene(
-                    obs, args.scene
-                )
-                if (new_source_w, new_source_h) != (source_w, source_h):
-                    p, state, single_apply_fn, split_apply_fn = apply_source_resize(
-                        p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
-                        new_source_w, new_source_h,
+                try:
+                    (
+                        control_id, output_id, cell_top_id, cell_bottom_id,
+                        new_source_w, new_source_h, cam_uuid,
+                    ) = resolve_scene(obs, args.scene)
+                except (SceneNotReady, ObsWsError) as resolve_exc:
+                    # A scene mid-rebuild (setup_scene --force) makes this fail too: keep the
+                    # stale ids and retry next iteration instead of killing the loop over it.
+                    last_scene_error, next_scene_error_log = report_scene_retry(
+                        args.scene, resolve_exc, last_scene_error, next_scene_error_log
                     )
-                    source_w, source_h = new_source_w, new_source_h
+                    time.sleep(SCENE_RESOLUTION_POLL_S)
                 else:
-                    single_apply_fn, split_apply_fn = build_apply_fns(
-                        args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
-                    )
-                if control is not None:
-                    control.set_connected(True)
+                    if (new_source_w, new_source_h) != (source_w, source_h):
+                        p, state, single_apply_fn, split_apply_fn = apply_source_resize(
+                            p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
+                            new_source_w, new_source_h,
+                        )
+                        source_w, source_h = new_source_w, new_source_h
+                    else:
+                        single_apply_fn, split_apply_fn = build_apply_fns(
+                            args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                        )
+                        reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                    if control is not None:
+                        control.set_connected(True)
+                    last_scene_error = None
+                    connection_lost_logged = False
 
             next_tick += target_period
             sleep_for = next_tick - time.perf_counter()

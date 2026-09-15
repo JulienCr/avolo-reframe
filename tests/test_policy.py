@@ -18,7 +18,7 @@ def _target(boxes: list[Rect], p: PolicyParams) -> Rect:
         p.source_w,
         p.source_h,
         p.ratio,
-        p.min_crop_h,
+        height_floor(p),
     )
 
 
@@ -518,7 +518,7 @@ def test_split_cell_falls_back_to_full_box_without_bust():
     box_b = Rect(1400, 200, 150, 700)
     cell_ratio = p.ratio * 2
     expected = clamp_to_source(
-        fit_ratio(expand(box_a, p.margin), cell_ratio), p.source_w, p.source_h, cell_ratio, p.min_crop_h / 2, p.eye_line
+        fit_ratio(expand(box_a, p.margin), cell_ratio), p.source_w, p.source_h, cell_ratio, height_floor(p) / 2, p.eye_line
     )
 
     state = initial_state(p)

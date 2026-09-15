@@ -46,6 +46,7 @@ DEFAULT_AVOCAM_PORT = 5000
 POLL_TIMEOUT_S = 8.0
 AVOCAM_POLL_TIMEOUT_S = 15.0  # network connect + first keyframe; to be tuned by live measurement
 POLL_INTERVAL_S = 0.25
+TEARDOWN_TIMEOUT_S = 5.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -133,9 +134,23 @@ def scene_exists(obs: ObsWs) -> bool:
 def teardown_existing_scene(obs: ObsWs) -> None:
     obs.request("RemoveScene", {"sceneName": SCENE_NAME})
     existing_inputs = {i["inputName"] for i in obs.request("GetInputList")["inputs"]}
-    for name in (FRAME_NAME, CAM_NAME, BG_NAME, OVERLAY_NAME):
-        if name in existing_inputs:
-            obs.request("RemoveInput", {"inputName": name})
+    removed = [name for name in (FRAME_NAME, CAM_NAME, BG_NAME, OVERLAY_NAME) if name in existing_inputs]
+    for name in removed:
+        obs.request("RemoveInput", {"inputName": name})
+
+    # obs-websocket removals complete asynchronously: a rebuild started too soon
+    # can collide with a scene or source name OBS has not actually released yet.
+    deadline = time.perf_counter() + TEARDOWN_TIMEOUT_S
+    stuck: list[str] = []
+    while time.perf_counter() < deadline:
+        scenes = {s["sceneName"] for s in obs.request("GetSceneList")["scenes"]}
+        inputs = {i["inputName"] for i in obs.request("GetInputList")["inputs"]}
+        stuck = ([SCENE_NAME] if SCENE_NAME in scenes else []) + [n for n in removed if n in inputs]
+        if not stuck:
+            return
+        time.sleep(POLL_INTERVAL_S)
+    print(f"OBS n'a pas libéré {', '.join(stuck)} après {TEARDOWN_TIMEOUT_S:g}s.")
+    sys.exit(1)
 
 
 def create_color_source(obs: ObsWs, name: str, color: int) -> int:
