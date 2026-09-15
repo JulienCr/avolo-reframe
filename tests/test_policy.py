@@ -836,3 +836,62 @@ def test_mode_switch_through_ease_cuts_during_the_lock():
 
     assert switched_at is not None
     assert switched_at < busy_until  # fired while the lock was still active
+
+
+# --- crown constraint holds even during an in-flight ease lock -------------
+
+
+def test_crown_violation_commits_through_the_lock_single():
+    p = PolicyParams(ease_ms=5000.0)
+    state = _lock_in_single_mode(p)
+    busy_until = state.busy_until_ms
+
+    # Same box the lock is easing to, but its crown has since risen above
+    # the already-applied crop -- a hard constraint, not a preference the
+    # lock should be allowed to postpone.
+    risen = Rect(1200, 200, 300, 700, crown=50.0)
+    t = p.dwell_ms + 10.0
+    assert t < busy_until
+    state, cmd = step(state, [risen], t, p)
+
+    assert cmd is not None
+    assert cmd.reason == "crown"
+    assert cmd.target.y <= risen.crown + 1e-9
+
+
+def test_crown_violation_commits_through_the_lock_split():
+    p = PolicyParams(ease_ms=5000.0)
+    box_a = Rect(300, 200, 150, 700)
+    box_b = Rect(1400, 200, 150, 700)
+    state = initial_state(p)
+    state, _ = step(state, [box_a, box_b], 0.0, p)
+    state, _ = step(state, [box_a, box_b], p.split_enter_ms, p)
+    assert state.mode == "split"
+
+    moved_a = Rect(600, 200, 150, 700)
+    t = p.split_enter_ms
+    state, _ = step(state, [moved_a, box_b], t, p)
+    state, cmd = step(state, [moved_a, box_b], t + p.dwell_ms, p)
+    assert cmd is not None and state.busy_until_ms is not None
+    busy_until = state.busy_until_ms
+
+    risen_a = Rect(600, 200, 150, 700, crown=50.0)
+    t2 = t + p.dwell_ms + 10.0
+    assert t2 < busy_until
+    state, cmd = step(state, [risen_a, box_b], t2, p)
+
+    assert cmd is not None
+    assert cmd.reason == "crown"
+    assert cmd.mode == "split"
+
+
+def test_no_crown_violation_still_no_command_during_the_lock():
+    p = PolicyParams(ease_ms=5000.0)
+    state = _lock_in_single_mode(p)
+    busy_until = state.busy_until_ms
+
+    t = p.dwell_ms + 10.0
+    assert t < busy_until
+    state, cmd = step(state, [Rect(1200, 200, 300, 700)], t, p)
+
+    assert cmd is None

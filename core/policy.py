@@ -425,6 +425,37 @@ def _step_single(
     return _commit(state, target, current, last_seen_ms, now_ms, reason, p)
 
 
+def _locked_crown_command(
+    state: PolicyState, boxes: list[Rect], now_ms: float, p: PolicyParams
+) -> tuple[PolicyState, Command] | None:
+    """Crown override for a frame the lock would otherwise swallow: the
+    crown is a hard constraint everywhere else in the policy, so a playing
+    ease must not be allowed to sit on a violation until it finishes.
+    """
+    if state.mode == "split" and state.cells is not None:
+        alive = [t for t in state.tracks if t is not None]
+        if len(alive) == 2:
+            cells = _cell_rects(alive, p)
+            if _crown_violated(state.cells[0], cells[0]) or _crown_violated(state.cells[1], cells[1]):
+                return _commit_split(state, cells, state.cells, now_ms, state.split_exit_since_ms, "crown", p)
+        return None
+    if boxes:
+        target = _target_from_boxes(boxes, p)
+        if _crown_violated(state.current, target):
+            return _commit(state, target, state.current, now_ms, now_ms, "crown", p)
+    return None
+
+
+def _locked_step(
+    state: PolicyState, boxes: list[Rect], now_ms: float, p: PolicyParams
+) -> tuple[PolicyState, Command | None]:
+    """What a locked frame returns absent a due mode switch: the applied
+    geometry stays put unless the crown constraint forces a commit.
+    """
+    crown = _locked_crown_command(state, boxes, now_ms, p)
+    return crown if crown is not None else (state, None)
+
+
 def step(
     state: PolicyState, boxes: list[Rect], now_ms: float, p: PolicyParams
 ) -> tuple[PolicyState, Command | None]:
@@ -433,10 +464,13 @@ def step(
         # Tracks keep ageing through the lock: otherwise a subject present
         # the whole time gets declared lost the instant the lock lifts (its
         # last_seen_ms would have been frozen at the pre-lock value).
-        return replace(state, tracks=_update_tracks(state.tracks, boxes, now_ms, p)), None
+        tracked = replace(state, tracks=_update_tracks(state.tracks, boxes, now_ms, p))
+        return _locked_step(tracked, boxes, now_ms, p)
 
     if not p.split_enabled:
-        return (state, None) if locked else _step_single(state, boxes, now_ms, p)
+        if locked:
+            return _locked_step(state, boxes, now_ms, p)
+        return _step_single(state, boxes, now_ms, p)
 
     tracks = _update_tracks(state.tracks, boxes, now_ms, p)
     alive = [t for t in tracks if t is not None]
@@ -448,18 +482,18 @@ def step(
             return _step_single(_reset_to_single(tracked), boxes, now_ms, p)
         if ready:
             if locked:
-                return replace(tracked, split_exit_since_ms=None), None
+                return _locked_step(replace(tracked, split_exit_since_ms=None), boxes, now_ms, p)
             return _split_hold(tracked, alive, None, now_ms, p)
         since = state.split_exit_since_ms if state.split_exit_since_ms is not None else now_ms
         if now_ms - since >= p.split_exit_ms:
             return _step_single(_reset_to_single(tracked), boxes, now_ms, p)
         if locked:
-            return replace(tracked, split_exit_since_ms=since), None
+            return _locked_step(replace(tracked, split_exit_since_ms=since), boxes, now_ms, p)
         return _split_hold(tracked, alive, since, now_ms, p)
 
     if not ready:
         if locked:
-            return replace(tracked, split_enter_since_ms=None), None
+            return _locked_step(replace(tracked, split_enter_since_ms=None), boxes, now_ms, p)
         if state.split_enter_since_ms is not None:
             tracked = replace(tracked, split_enter_since_ms=None)
         return _step_single(tracked, boxes, now_ms, p)
@@ -469,11 +503,13 @@ def step(
     # starting it -- so a stale-but-ready pair merely suspends the countdown.
     fresh_both = all(t.last_seen_ms == now_ms for t in alive)
     if not fresh_both:
-        return (tracked, None) if locked else _step_single(tracked, boxes, now_ms, p)
+        if locked:
+            return _locked_step(tracked, boxes, now_ms, p)
+        return _step_single(tracked, boxes, now_ms, p)
 
     since = state.split_enter_since_ms if state.split_enter_since_ms is not None else now_ms
     if now_ms - since >= p.split_enter_ms:
         return _enter_split(tracked, alive, now_ms, p)
     if locked:
-        return replace(tracked, split_enter_since_ms=since), None
+        return _locked_step(replace(tracked, split_enter_since_ms=since), boxes, now_ms, p)
     return _step_single(replace(tracked, split_enter_since_ms=since), boxes, now_ms, p)

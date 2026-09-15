@@ -184,9 +184,9 @@ def crown_checks(state: PolicyState, boxes: list[Rect]) -> list[dict]:
     this frame's own detections -- never state.tracks, so the rule is the
     same for any policy that reshapes tracking.
 
-    Split: a box is checked against the applied cell whose horizontal span
-    contains its cx (nearest cx if several qualify); a box framed by no
-    cell is skipped. Single: checked against state.current when its span
+    Split: a box is checked against the applied cells whose horizontal span
+    contains its cx, keeping the best margin -- cells often overlap in x, and
+    a head shown whole in one cell is not cut; a box in no cell is skipped. Single: checked against state.current when its span
     contains the box's cx.
     """
     if state.mode == "split" and state.cells is not None:
@@ -197,7 +197,7 @@ def crown_checks(state: PolicyState, boxes: list[Rect]) -> list[dict]:
             containing = [c for c in state.cells if c.x <= box.cx <= c.right]
             if not containing:
                 continue
-            cell = min(containing, key=lambda c: abs(c.cx - box.cx))
+            cell = min(containing, key=lambda c: c.y)
             checks.append(_crown_check(box.crown, cell.y))
         return checks
     return [
