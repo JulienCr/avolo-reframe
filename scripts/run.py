@@ -33,6 +33,8 @@ REFERENCE_DISTANCE_PX = 675.0
 SCENE_CHECK_INTERVAL_S = 2.0
 SCENE_RESOLUTION_TIMEOUT_S = 3.0
 SCENE_RESOLUTION_POLL_S = 0.1
+# Measured in the OBS log on a rebuild: receiver started, first 4K frame 0.87s later.
+AVOCAM_FIRST_FRAME_TIMEOUT_S = 5.0
 
 
 class SceneNotReady(Exception):
@@ -289,7 +291,23 @@ def source_size(obs: ObsWs, scene: str, control_id: int) -> tuple[int, int]:
     return transform["sourceWidth"], transform["sourceHeight"]
 
 
-def resolve_scene(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int, int, str]:
+def should_wait_for_first_frame(
+    kind: str, reported_size: tuple[int, int], current_size: tuple[int, int] | None
+) -> bool:
+    """Pure: True when a rebuilt AvoCam input reports the plugin's placeholder
+    size while the loop still holds a real (non-placeholder) size.
+    """
+    return (
+        kind == AVOCAM_KIND
+        and reported_size == AVOCAM_PLACEHOLDER_SIZE
+        and current_size is not None
+        and current_size != AVOCAM_PLACEHOLDER_SIZE
+    )
+
+
+def resolve_scene(
+    obs: ObsWs, scene: str, current_size: tuple[int, int] | None = None
+) -> tuple[int, int, int, int, int, int, str]:
     """(control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h, cam_uuid).
 
     A scene rebuilt moments ago may not have renegotiated a resolution yet:
@@ -302,9 +320,15 @@ def resolve_scene(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int, int,
         time.sleep(SCENE_RESOLUTION_POLL_S)
         source_w, source_h = source_size(obs, scene, control_id)
     if not source_w or not source_h:
-        raise SceneNotReady(
-            f"Scène « {scene} » : résolution jamais renégociée après reconstruction. Relancez scripts.run."
-        )
+        raise SceneNotReady(f"Scène « {scene} » : résolution pas encore négociée après reconstruction")
+
+    cam_kind = obs.request("GetInputSettings", {"inputName": CAM_NAME})["inputKind"]
+    if should_wait_for_first_frame(cam_kind, (int(source_w), int(source_h)), current_size):
+        frame_deadline = time.perf_counter() + AVOCAM_FIRST_FRAME_TIMEOUT_S
+        while (int(source_w), int(source_h)) == AVOCAM_PLACEHOLDER_SIZE and time.perf_counter() < frame_deadline:
+            time.sleep(SCENE_RESOLUTION_POLL_S)
+            source_w, source_h = source_size(obs, scene, control_id)
+
     return control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h, cam_uuid
 
 
@@ -657,7 +681,7 @@ def main() -> None:
                             (
                                 control_id, output_id, cell_top_id, cell_bottom_id,
                                 new_source_w, new_source_h, cam_uuid,
-                            ) = resolve_scene(obs, args.scene)
+                            ) = resolve_scene(obs, args.scene, current_size=(source_w, source_h))
                         except (SceneNotReady, ObsWsError) as resolve_exc:
                             last_scene_error, next_scene_error_log = report_scene_retry(
                                 args.scene, resolve_exc, last_scene_error, next_scene_error_log
@@ -803,7 +827,7 @@ def main() -> None:
                     (
                         control_id, output_id, cell_top_id, cell_bottom_id,
                         new_source_w, new_source_h, cam_uuid,
-                    ) = resolve_scene(obs, args.scene)
+                    ) = resolve_scene(obs, args.scene, current_size=(source_w, source_h))
                 except (SceneNotReady, ObsWsError) as resolve_exc:
                     # A scene mid-rebuild (setup_scene --force) makes this fail too: keep the
                     # stale ids and retry next iteration instead of killing the loop over it.

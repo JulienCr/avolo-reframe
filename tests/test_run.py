@@ -4,13 +4,14 @@ import dataclasses
 
 from adapters.control import ControlState
 from core.policy import PolicyParams, REFERENCE_SOURCE_H, initial_state
-from scripts.layout import CAM_NAME
+from scripts.layout import AVOCAM_KIND, AVOCAM_PLACEHOLDER_SIZE, CAM_NAME
 from scripts.run import (
     REFERENCE_DISTANCE_PX,
     apply_source_resize,
     cam_items_match,
     reapply_state,
     scaled_duration_ms,
+    should_wait_for_first_frame,
 )
 
 
@@ -88,3 +89,19 @@ def test_cam_items_match_rejects_rebuilt_source_with_new_uuid():
     # uuid of the underlying input changes, which is what must be caught here.
     items = _scene_items("uuid-new")
     assert cam_items_match(items, (1, 2, 3, 4), "uuid-old") is False
+
+
+def test_should_wait_for_first_frame_avocam_placeholder_while_loop_holds_4k():
+    assert should_wait_for_first_frame(AVOCAM_KIND, AVOCAM_PLACEHOLDER_SIZE, (3840, 2160)) is True
+
+
+def test_should_wait_for_first_frame_avocam_placeholder_while_loop_also_holds_placeholder():
+    assert should_wait_for_first_frame(AVOCAM_KIND, AVOCAM_PLACEHOLDER_SIZE, AVOCAM_PLACEHOLDER_SIZE) is False
+
+
+def test_should_wait_for_first_frame_non_avocam_source_at_placeholder_size():
+    assert should_wait_for_first_frame("dshow_input", AVOCAM_PLACEHOLDER_SIZE, (3840, 2160)) is False
+
+
+def test_should_wait_for_first_frame_avocam_already_at_4k():
+    assert should_wait_for_first_frame(AVOCAM_KIND, (3840, 2160), (3840, 2160)) is False
