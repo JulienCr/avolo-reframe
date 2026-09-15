@@ -81,7 +81,7 @@ def initial_state(p: PolicyParams) -> PolicyState:
     )
 
 
-def _height_floor(p: PolicyParams) -> float:
+def height_floor(p: PolicyParams) -> float:
     """min_crop_h and max_zoom both floor the crop height; the larger of
     the two wins, so the tighter constraint is the one that actually holds.
     """
@@ -95,7 +95,7 @@ def _target_from_boxes(boxes: list[Rect], p: PolicyParams) -> Rect:
         p.source_w,
         p.source_h,
         p.ratio,
-        _height_floor(p),
+        height_floor(p),
         p.eye_line,
     )
 
@@ -124,7 +124,7 @@ def _gap_fraction(a: Rect, b: Rect, source_w: float) -> float:
     return (right.x - left.right) / source_w
 
 
-def _split_ready(alive: list[Track], p: PolicyParams) -> bool:
+def split_ready(boxes: list[Rect], p: PolicyParams) -> bool:
     """True when the single-mode target is degenerate and the two subjects
     are far enough apart that stacking them beats one shared crop.
 
@@ -132,10 +132,9 @@ def _split_ready(alive: list[Track], p: PolicyParams) -> bool:
     the union past the target ratio, and clamp_to_source pinned it to the
     full source height.
     """
-    boxes = [t.box for t in alive]
     merged = union(boxes)
     target = clamp_to_source(
-        fit_ratio(expand(merged, p.margin), p.ratio), p.source_w, p.source_h, p.ratio, _height_floor(p), p.eye_line
+        fit_ratio(expand(merged, p.margin), p.ratio), p.source_w, p.source_h, p.ratio, height_floor(p), p.eye_line
     )
     degenerate = (merged.w / merged.h) > p.ratio and target.h == p.source_h
     return degenerate and _gap_fraction(boxes[0], boxes[1], p.source_w) > p.split_min_gap
@@ -160,7 +159,7 @@ def _cell_rects(alive: list[Track], p: PolicyParams) -> tuple[Rect, Rect]:
     # Cell height is half the output height at the same width, so the
     # cell ratio is double the single-crop ratio.
     cell_ratio = p.ratio * 2
-    cell_min_h = _height_floor(p) / 2
+    cell_min_h = height_floor(p) / 2
     return tuple(
         clamp_to_source(
             fit_ratio(expand(_cell_source(t.box), p.margin), cell_ratio),
@@ -390,7 +389,7 @@ def step(
 
     tracks = _update_tracks(state.tracks, boxes, now_ms, p)
     alive = [t for t in tracks if t is not None]
-    ready = len(alive) == 2 and _split_ready(alive, p)
+    ready = len(alive) == 2 and split_ready([t.box for t in alive], p)
     tracked = replace(state, tracks=tracks)
 
     if state.mode == "split":
