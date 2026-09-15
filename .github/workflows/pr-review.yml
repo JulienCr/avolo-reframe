@@ -66,13 +66,15 @@ jobs:
           # variable reads as empty, which the action treats as on.
           enable: ${{ vars.ENABLE_ARISTARQUE }}
           ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
-          # The ADR and TODO.md hold the settled decisions, poc-mac-webcam.md the
-          # measurements behind them: a rule without its figure gets undone by reflex.
+          # The ADR and TODO.md hold the settled decisions, the two poc-*.md the measurements
+          # behind them (Mac, then target): a rule without its figure gets undone by reflex.
+          # Missing paths are ignored, so poc-windows.md applies once the port lands.
           doctrine: |
             CLAUDE.md
             docs/adr/0001-avolo-reframe.md
             TODO.md
             docs/poc-mac-webcam.md
+            docs/poc-windows.md
           # An 80 KB illustrated page, and replay outputs that get compared, not read.
           skip: |
             docs/pipeline.html
