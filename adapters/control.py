@@ -19,7 +19,7 @@ _WINDOW = 200
 
 _PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "margin": (0.0, 5.0),
-    "min_crop_h": (1.0, 4320.0),
+    "min_crop_h": (1.0, 1080.0),  # 1080p pixels, scaled by core.policy.height_floor to the actual source
     "dead_zone": (0.0, 1.0),
     "dwell_ms": (0.0, 20000.0),
     "ease_ms": (0.0, 20000.0),
@@ -99,6 +99,13 @@ class ControlState:
     def set_connected(self, connected: bool) -> None:
         with self.lock:
             self.connected = connected
+
+    def replace_source_size(self, source_w: int, source_h: int) -> None:
+        """Update just the source geometry, keeping any dock-tuned fields;
+        called when the live loop detects the source has changed size.
+        """
+        with self.lock:
+            self.params = dataclasses.replace(self.params, source_w=source_w, source_h=source_h)
 
     def get_controls(self) -> tuple[PolicyParams, float, bool, bool]:
         """Current (params, fps, upper_body, paused), as last requested by the dock."""

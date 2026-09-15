@@ -8,6 +8,11 @@ from itertools import permutations
 
 from core.geometry import Rect, clamp_to_source, default_rect, expand, fit_ratio, union
 
+# min_crop_h and REFERENCE_DISTANCE_PX (scripts/run.py) are both calibrated
+# in 1080p pixels; scaling by source_h / REFERENCE_SOURCE_H keeps a 4K
+# source behaving like 1080p instead of doubling the effective max zoom.
+REFERENCE_SOURCE_H = 1080
+
 
 @dataclass(frozen=True)
 class PolicyParams:
@@ -85,8 +90,10 @@ def initial_state(p: PolicyParams) -> PolicyState:
 def height_floor(p: PolicyParams) -> float:
     """min_crop_h and max_zoom both floor the crop height; the larger of
     the two wins, so the tighter constraint is the one that actually holds.
+    min_crop_h is expressed in 1080p pixels and scaled to the source height.
     """
-    return max(p.min_crop_h, p.source_h / p.max_zoom)
+    scaled_min_crop_h = p.min_crop_h * p.source_h / REFERENCE_SOURCE_H
+    return max(scaled_min_crop_h, p.source_h / p.max_zoom)
 
 
 def _target_from_boxes(boxes: list[Rect], p: PolicyParams) -> Rect:

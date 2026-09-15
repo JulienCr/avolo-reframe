@@ -18,8 +18,8 @@ from adapters.detector import build_detector, to_source_rect
 from adapters.frames import FrameSource
 from adapters.obsws import ObsWs, ObsWsError
 from core.geometry import Rect, clamp_to_source, expand, fit_ratio, to_crop, union
-from core.policy import Command, PolicyParams, PolicyState, initial_state, step
-from scripts.layout import CAM_NAME, CONTROL_W, OUTPUT_H, OUTPUT_W, RATIO, SCENE_NAME
+from core.policy import Command, PolicyParams, PolicyState, REFERENCE_SOURCE_H, height_floor, initial_state, step
+from scripts.layout import AVOCAM_KIND, AVOCAM_PLACEHOLDER_SIZE, CAM_NAME, CONTROL_W, OUTPUT_H, OUTPUT_W, RATIO, SCENE_NAME
 
 # Shared with setup_scene.py's --control-port default, so the loop and the
 # overlay Browser Source URL it bakes in can never drift apart.
@@ -33,10 +33,17 @@ REFERENCE_DISTANCE_PX = 675.0
 SCENE_CHECK_INTERVAL_S = 2.0
 SCENE_RESOLUTION_TIMEOUT_S = 3.0
 SCENE_RESOLUTION_POLL_S = 0.1
+# Measured in the OBS log on a rebuild: receiver started, first 4K frame 0.87s later.
+AVOCAM_FIRST_FRAME_TIMEOUT_S = 5.0
+
+
+class SceneNotReady(Exception):
+    """Scene items missing, incomplete, or mid-rebuild; message is the French line to print."""
+
 
 DEFAULT_CONFIG_PATH = Path("reframe.toml")
-# TOML has no null: password/log/media_file use "" for "not set", converted below.
-_NULLABLE_STRING_KEYS = {"password", "log", "media_file"}
+# TOML has no null: password/log/media_file/avocam_ip use "" for "not set", converted below.
+_NULLABLE_STRING_KEYS = {"password", "log", "media_file", "avocam_ip"}
 
 # section -> {toml key: (argparse dest, expected type(s))}. A key's dest can
 # differ from its TOML spelling (split_enabled -> dest "split", matching the
@@ -84,6 +91,8 @@ CONFIG_SCHEMA: dict[str, dict[str, tuple[str, type | tuple[type, ...]]]] = {
     "source": {
         "media_file": ("media_file", str),
         "camera": ("camera", bool),
+        "avocam_ip": ("avocam_ip", str),
+        "avocam_port": ("avocam_port", int),
     },
 }
 # Dests scripts.run's own parser declares; scripts.setup_scene filters for its
@@ -91,6 +100,8 @@ CONFIG_SCHEMA: dict[str, dict[str, tuple[str, type | tuple[type, ...]]]] = {
 RUN_CONFIG_DESTS = {dest for section in CONFIG_SCHEMA.values() for dest, _ in section.values()} - {
     "media_file",
     "camera",
+    "avocam_ip",
+    "avocam_port",
 }
 
 
@@ -179,10 +190,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration", type=float, default=0.0, help="0 = jusqu'à Ctrl-C")
     parser.add_argument("--log", default=None)
     parser.add_argument("--margin", type=float, default=defaults.margin)
-    parser.add_argument("--min-crop-h", type=float, default=defaults.min_crop_h)
+    parser.add_argument(
+        "--min-crop-h", type=float, default=defaults.min_crop_h,
+        help="Pixels d'une source 1080p, mis à l'échelle selon la hauteur de la source.",
+    )
     parser.add_argument("--dead-zone", type=float, default=defaults.dead_zone)
     parser.add_argument("--dwell-ms", type=float, default=defaults.dwell_ms)
-    parser.add_argument("--ease-ms", type=float, default=defaults.ease_ms, help="Durée à la distance de référence (675 px).")
+    parser.add_argument(
+        "--ease-ms", type=float, default=defaults.ease_ms,
+        help="Durée à la distance de référence (675 px d'une source 1080p, mise à l'échelle).",
+    )
     parser.add_argument("--ease-min-ms", type=float, default=180.0)
     parser.add_argument("--ease-max-ms", type=float, default=900.0)
     parser.add_argument("--snap", action=argparse.BooleanOptionalAction, default=False)
@@ -217,24 +234,35 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int]:
-    """Return (control_id, output_id, cell_top_id, cell_bottom_id).
+def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int, str]:
+    """Return (control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid).
 
     Distinguished by bounds only, never by creation order: boundsWidth
     separates control from the three OUTPUT_W items, boundsHeight then
     separates the single output (OUTPUT_H) from the two cells (half that),
-    and positionY separates the top cell from the bottom one.
+    and positionY separates the top cell from the bottom one. cam_uuid is
+    the sourceUuid shared by all four CAM_NAME items: a rebuild recreates
+    the RF Cam input under the same name but a fresh uuid, which is what
+    lets a caller tell a live scene from a rebuilt one with reused ids.
     """
     items = obs.request("GetSceneItemList", {"sceneName": scene})["sceneItems"]
-    cam_ids = [i["sceneItemId"] for i in items if i["sourceName"] == CAM_NAME]
+    cam_items = [i for i in items if i["sourceName"] == CAM_NAME]
 
-    if len(cam_ids) != 4:
-        print(
-            f"Scène « {scene} » incomplète (attendu 4 items {CAM_NAME}, trouvé {len(cam_ids)}). "
+    if len(cam_items) != 4:
+        raise SceneNotReady(
+            f"Scène « {scene} » incomplète (attendu 4 items {CAM_NAME}, trouvé {len(cam_items)}). "
             "Lancez d'abord setup_scene --force."
         )
-        sys.exit(1)
 
+    cam_uuids = {i["sourceUuid"] for i in cam_items}
+    if len(cam_uuids) != 1:
+        raise SceneNotReady(
+            f"Scène « {scene} » : les items {CAM_NAME} référencent des sources différentes "
+            "(reconstruction en cours ?)"
+        )
+    cam_uuid = cam_uuids.pop()
+
+    cam_ids = [i["sceneItemId"] for i in cam_items]
     transforms = {
         cam_id: obs.request("GetSceneItemTransform", {"sceneName": scene, "sceneItemId": cam_id})[
             "sceneItemTransform"
@@ -246,15 +274,14 @@ def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int]:
     cell_ids = [i for i, t in transforms.items() if t["boundsWidth"] == OUTPUT_W and t["boundsHeight"] == OUTPUT_H / 2]
 
     if len(control_ids) != 1 or len(output_ids) != 1 or len(cell_ids) != 2:
-        print(
+        raise SceneNotReady(
             f"Impossible d'identifier les items {CAM_NAME} par leurs bounds "
             f"(contrôle={len(control_ids)} sortie={len(output_ids)} cellules={len(cell_ids)}). "
             "Relancez setup_scene --force."
         )
-        sys.exit(1)
 
     cell_top_id, cell_bottom_id = sorted(cell_ids, key=lambda i: transforms[i]["positionY"])
-    return control_ids[0], output_ids[0], cell_top_id, cell_bottom_id
+    return control_ids[0], output_ids[0], cell_top_id, cell_bottom_id, cam_uuid
 
 
 def source_size(obs: ObsWs, scene: str, control_id: int) -> tuple[int, int]:
@@ -264,33 +291,78 @@ def source_size(obs: ObsWs, scene: str, control_id: int) -> tuple[int, int]:
     return transform["sourceWidth"], transform["sourceHeight"]
 
 
-def resolve_scene(obs: ObsWs, scene: str) -> tuple[int, int, int, int, int, int]:
-    """(control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h).
+def should_wait_for_first_frame(
+    kind: str, reported_size: tuple[int, int], current_size: tuple[int, int] | None
+) -> bool:
+    """Pure: True when a rebuilt AvoCam input reports the plugin's placeholder
+    size while the loop still holds a real (non-placeholder) size.
+    """
+    return (
+        kind == AVOCAM_KIND
+        and reported_size == AVOCAM_PLACEHOLDER_SIZE
+        and current_size is not None
+        and current_size != AVOCAM_PLACEHOLDER_SIZE
+    )
+
+
+def resolve_scene(
+    obs: ObsWs, scene: str, current_size: tuple[int, int] | None = None
+) -> tuple[int, int, int, int, int, int, str]:
+    """(control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h, cam_uuid).
 
     A scene rebuilt moments ago may not have renegotiated a resolution yet:
     poll briefly rather than handing back 0x0, which a caller later divides by.
     """
-    control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, scene)
+    control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid = find_scene_items(obs, scene)
     deadline = time.perf_counter() + SCENE_RESOLUTION_TIMEOUT_S
     source_w, source_h = source_size(obs, scene, control_id)
     while (not source_w or not source_h) and time.perf_counter() < deadline:
         time.sleep(SCENE_RESOLUTION_POLL_S)
         source_w, source_h = source_size(obs, scene, control_id)
     if not source_w or not source_h:
-        print(f"Scène « {scene} » : résolution jamais renégociée après reconstruction. Relancez scripts.run.")
-        sys.exit(1)
-    return control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+        raise SceneNotReady(f"Scène « {scene} » : résolution pas encore négociée après reconstruction")
+
+    cam_kind = obs.request("GetInputSettings", {"inputName": CAM_NAME})["inputKind"]
+    if should_wait_for_first_frame(cam_kind, (int(source_w), int(source_h)), current_size):
+        frame_deadline = time.perf_counter() + AVOCAM_FIRST_FRAME_TIMEOUT_S
+        while (int(source_w), int(source_h)) == AVOCAM_PLACEHOLDER_SIZE and time.perf_counter() < frame_deadline:
+            time.sleep(SCENE_RESOLUTION_POLL_S)
+            source_w, source_h = source_size(obs, scene, control_id)
+
+    return control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h, cam_uuid
 
 
-def scene_items_match(obs: ObsWs, scene: str, ids: tuple[int, int, int, int]) -> bool:
-    """True when every cached id still names a CAM_NAME item in scene.
+def cam_items_match(items: list[dict], ids: tuple[int, int, int, int], cam_uuid: str) -> bool:
+    """Pure: True when every id in ids names a CAM_NAME item carrying cam_uuid, in a
+    GetSceneItemList-shaped list.
 
-    A rebuild can reuse the same numeric ids for a different source: this
-    checks sourceName, not just presence, which is what a stale id hides.
+    A rebuild can reuse the same numeric ids and the same source name for a
+    fresh input: sourceUuid is what actually changes, which name/id alone hide.
     """
+    by_id = {i["sceneItemId"]: i for i in items}
+    return all(
+        (item := by_id.get(item_id)) is not None
+        and item["sourceName"] == CAM_NAME
+        and item.get("sourceUuid") == cam_uuid
+        for item_id in ids
+    )
+
+
+def scene_items_match(obs: ObsWs, scene: str, ids: tuple[int, int, int, int], cam_uuid: str) -> bool:
     items = obs.request("GetSceneItemList", {"sceneName": scene})["sceneItems"]
-    names = {i["sceneItemId"]: i["sourceName"] for i in items}
-    return all(names.get(item_id) == CAM_NAME for item_id in ids)
+    return cam_items_match(items, ids, cam_uuid)
+
+
+def report_scene_retry(scene: str, exc: Exception, last_error: str | None, next_log_at: float) -> tuple[str, float]:
+    """Rate-limited "scene unavailable" line, shared by the periodic check and the
+    reconnect handler: a stuck rebuild logs at most once per SCENE_CHECK_INTERVAL_S.
+    """
+    msg = str(exc)
+    now = time.perf_counter()
+    if msg != last_error or now >= next_log_at:
+        print(f"Scène « {scene} » indisponible ({msg}), nouvel essai.")
+        next_log_at = now + SCENE_CHECK_INTERVAL_S
+    return msg, next_log_at
 
 
 def crop_patch(rect: Rect, source_w: int, source_h: int) -> dict:
@@ -351,14 +423,51 @@ def build_apply_fns(
     )
 
 
+def apply_source_resize(
+    p: PolicyParams,
+    control: ControlState | None,
+    animator: Animator,
+    scene: str,
+    output_id: int,
+    cell_top_id: int,
+    cell_bottom_id: int,
+    new_source_w: int,
+    new_source_h: int,
+) -> tuple[PolicyParams, PolicyState, ApplyFn, ApplyFn]:
+    """Adopt a source's new size: the pixel-space policy state is reset, not
+    rescaled; params and dock keep their tuning, only source_w/source_h change.
+    """
+    print(f"Taille de la source changée : {p.source_w}x{p.source_h} -> {new_source_w}x{new_source_h}.")
+    p = dataclasses.replace(p, source_w=new_source_w, source_h=new_source_h)
+    state = initial_state(p)
+    if control is not None:
+        control.replace_source_size(new_source_w, new_source_h)
+    single_apply_fn, split_apply_fn = build_apply_fns(
+        scene, output_id, cell_top_id, cell_bottom_id, new_source_w, new_source_h
+    )
+    animator.jump((state.current,), single_apply_fn)
+    return p, state, single_apply_fn, split_apply_fn
+
+
+def reapply_state(animator: Animator, state: PolicyState, single_apply_fn: ApplyFn, split_apply_fn: ApplyFn) -> None:
+    """Cut OBS back to the policy's current framing, e.g. onto freshly rebuilt, uncropped items."""
+    if state.mode == "split" and state.cells is not None:
+        animator.jump(state.cells, split_apply_fn)
+    else:
+        animator.jump((state.current,), single_apply_fn)
+
+
 def travel_distance(frm: Rect, to: Rect) -> float:
     """Distance in source px, folding translation (center) and zoom (height)."""
     return math.dist((frm.cx, frm.cy, frm.h), (to.cx, to.cy, to.h))
 
 
-def scaled_duration_ms(distance: float, reference_ms: float, min_ms: float, max_ms: float) -> float:
-    """Duration proportional to distance, reference_ms at REFERENCE_DISTANCE_PX, clamped."""
-    return max(min_ms, min(max_ms, reference_ms * distance / REFERENCE_DISTANCE_PX))
+def scaled_duration_ms(distance: float, reference_ms: float, min_ms: float, max_ms: float, source_h: int) -> float:
+    """Duration proportional to distance, reference_ms at REFERENCE_DISTANCE_PX
+    (itself scaled to source_h, like height_floor), clamped.
+    """
+    reference_distance_px = REFERENCE_DISTANCE_PX * source_h / REFERENCE_SOURCE_H
+    return max(min_ms, min(max_ms, reference_ms * distance / reference_distance_px))
 
 
 def emit_command(
@@ -368,6 +477,7 @@ def emit_command(
     split_apply_fn: ApplyFn,
     ease_min_ms: float,
     ease_max_ms: float,
+    source_h: int,
 ) -> None:
     if cmd.mode == "split":
         to = cmd.cells
@@ -382,7 +492,7 @@ def emit_command(
         animator.jump(to, single_apply_fn)
         return
     distance = travel_distance(cmd.frm, cmd.target)
-    duration_ms = scaled_duration_ms(distance, cmd.duration_ms, ease_min_ms, ease_max_ms)
+    duration_ms = scaled_duration_ms(distance, cmd.duration_ms, ease_min_ms, ease_max_ms, source_h)
     animator.play((cmd.frm,), to, duration_ms, single_apply_fn)
 
 
@@ -428,7 +538,9 @@ def raw_target(merged: Rect | None, p: PolicyParams) -> Rect | None:
     """Mirrors core.policy's internal target formula, for tracing even when no command fires."""
     if merged is None:
         return None
-    return clamp_to_source(fit_ratio(expand(merged, p.margin), p.ratio), p.source_w, p.source_h, p.ratio, p.min_crop_h)
+    return clamp_to_source(
+        fit_ratio(expand(merged, p.margin), p.ratio), p.source_w, p.source_h, p.ratio, height_floor(p)
+    )
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -472,8 +584,17 @@ def main() -> None:
     obs = ObsWs(url=args.url, password=args.password)
     try:
         obs.connect()
-        control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, args.scene)
+        control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid = find_scene_items(obs, args.scene)
         source_w, source_h = source_size(obs, args.scene, control_id)
+        cam_kind = obs.request("GetInputSettings", {"inputName": CAM_NAME})["inputKind"]
+        if cam_kind == AVOCAM_KIND and (source_w, source_h) == AVOCAM_PLACEHOLDER_SIZE:
+            print(
+                f"Attention : RF Cam annonce {source_w}x{source_h}, la taille du motif de test du plugin AvoCam -- "
+                "la boucle adoptera la vraie taille dès la première image reçue."
+            )
+    except SceneNotReady as exc:
+        print(str(exc))
+        sys.exit(1)
     except ObsWsError as exc:
         print(f"Scène « {args.scene} » introuvable ou invalide ({exc}). Lancez d'abord setup_scene.")
         sys.exit(1)
@@ -543,21 +664,58 @@ def main() -> None:
     deadline = None if args.duration <= 0 else start + args.duration
     next_tick = start
     next_scene_check = start + SCENE_CHECK_INTERVAL_S
+    last_scene_error: str | None = None
+    next_scene_error_log = 0.0
+    connection_lost_logged = False
 
     try:
         while deadline is None or time.perf_counter() < deadline:
             try:
                 if time.perf_counter() >= next_scene_check:
                     ids = (control_id, output_id, cell_top_id, cell_bottom_id)
-                    if not scene_items_match(obs, args.scene, ids):
-                        print("Scène reconstruite pendant que la boucle tournait : ré-résolution des scene items.")
-                        control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h = resolve_scene(
-                            obs, args.scene
-                        )
-                        single_apply_fn, split_apply_fn = build_apply_fns(
-                            args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
-                        )
-                    next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
+                    if not scene_items_match(obs, args.scene, ids, cam_uuid):
+                        # A half-built rebuild (setup_scene creating items over some ms) must
+                        # not kill the loop: retry locally, on the shared rate-limited line,
+                        # rather than falling through to the "Connexion OBS perdue" handler.
+                        try:
+                            (
+                                control_id, output_id, cell_top_id, cell_bottom_id,
+                                new_source_w, new_source_h, cam_uuid,
+                            ) = resolve_scene(obs, args.scene, current_size=(source_w, source_h))
+                        except (SceneNotReady, ObsWsError) as resolve_exc:
+                            last_scene_error, next_scene_error_log = report_scene_retry(
+                                args.scene, resolve_exc, last_scene_error, next_scene_error_log
+                            )
+                            next_scene_check = time.perf_counter() + SCENE_RESOLUTION_POLL_S
+                        else:
+                            print(
+                                "Scène reconstruite pendant que la boucle tournait : ré-résolution des scene items."
+                            )
+                            if (new_source_w, new_source_h) != (source_w, source_h):
+                                p, state, single_apply_fn, split_apply_fn = apply_source_resize(
+                                    p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
+                                    new_source_w, new_source_h,
+                                )
+                                source_w, source_h = new_source_w, new_source_h
+                            else:
+                                single_apply_fn, split_apply_fn = build_apply_fns(
+                                    args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                                )
+                                reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                            if control is not None:
+                                control.set_connected(True)
+                            last_scene_error = None
+                            connection_lost_logged = False
+                            next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
+                    else:
+                        new_source_w, new_source_h = source_size(obs, args.scene, control_id)
+                        if new_source_w and new_source_h and (new_source_w, new_source_h) != (source_w, source_h):
+                            p, state, single_apply_fn, split_apply_fn = apply_source_resize(
+                                p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
+                                new_source_w, new_source_h,
+                            )
+                            source_w, source_h = new_source_w, new_source_h
+                        next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
 
                 paused, action = False, None
                 if control is not None:
@@ -608,7 +766,9 @@ def main() -> None:
                 # A recenter always reaches OBS; an ordinary command is held back while paused.
                 emitted = cmd is not None and (action == "recenter" or not paused)
                 if emitted:
-                    emit_command(animator, cmd, single_apply_fn, split_apply_fn, args.ease_min_ms, args.ease_max_ms)
+                    emit_command(
+                        animator, cmd, single_apply_fn, split_apply_fn, args.ease_min_ms, args.ease_max_ms, source_h
+                    )
                     stats["send"].append((time.perf_counter() - t3) * 1000)
                     commands_emitted += 1
 
@@ -653,20 +813,44 @@ def main() -> None:
 
                 iterations += 1
             except ObsWsError as exc:
-                print(f"Connexion OBS perdue ({exc}), reconnexion...")
+                # At most one line per failure episode: a scene mid-rebuild makes
+                # frame grabs fail too, which would otherwise reprint this every tick.
+                if not connection_lost_logged:
+                    print(f"Connexion OBS perdue ({exc}), reconnexion...")
+                    connection_lost_logged = True
                 if control is not None:
                     control.set_connected(False)
                 obs.ensure_connected()
                 # Re-resolving ids alone is not enough: single/split_apply_fn
                 # close over the old ones by value and must be rebuilt too.
-                control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h = resolve_scene(
-                    obs, args.scene
-                )
-                single_apply_fn, split_apply_fn = build_apply_fns(
-                    args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
-                )
-                if control is not None:
-                    control.set_connected(True)
+                try:
+                    (
+                        control_id, output_id, cell_top_id, cell_bottom_id,
+                        new_source_w, new_source_h, cam_uuid,
+                    ) = resolve_scene(obs, args.scene, current_size=(source_w, source_h))
+                except (SceneNotReady, ObsWsError) as resolve_exc:
+                    # A scene mid-rebuild (setup_scene --force) makes this fail too: keep the
+                    # stale ids and retry next iteration instead of killing the loop over it.
+                    last_scene_error, next_scene_error_log = report_scene_retry(
+                        args.scene, resolve_exc, last_scene_error, next_scene_error_log
+                    )
+                    time.sleep(SCENE_RESOLUTION_POLL_S)
+                else:
+                    if (new_source_w, new_source_h) != (source_w, source_h):
+                        p, state, single_apply_fn, split_apply_fn = apply_source_resize(
+                            p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
+                            new_source_w, new_source_h,
+                        )
+                        source_w, source_h = new_source_w, new_source_h
+                    else:
+                        single_apply_fn, split_apply_fn = build_apply_fns(
+                            args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                        )
+                        reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                    if control is not None:
+                        control.set_connected(True)
+                    last_scene_error = None
+                    connection_lost_logged = False
 
             next_tick += target_period
             sleep_for = next_tick - time.perf_counter()

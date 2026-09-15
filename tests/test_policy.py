@@ -8,7 +8,7 @@ from core.geometry import (
     to_crop,
     union,
 )
-from core.policy import PolicyParams, PolicyState, initial_state, step
+from core.policy import PolicyParams, PolicyState, height_floor, initial_state, step
 
 
 def _target(boxes: list[Rect], p: PolicyParams) -> Rect:
@@ -18,7 +18,7 @@ def _target(boxes: list[Rect], p: PolicyParams) -> Rect:
         p.source_w,
         p.source_h,
         p.ratio,
-        p.min_crop_h,
+        height_floor(p),
     )
 
 
@@ -478,6 +478,17 @@ def test_max_zoom_caps_the_crop_height():
     assert abs(cmd.target.h - p.source_h / p.max_zoom) < 1e-9
 
 
+def test_height_floor_is_unchanged_at_1080p():
+    p = PolicyParams(source_w=1920, source_h=1080, min_crop_h=960.0)
+    assert height_floor(p) == 960.0
+
+
+def test_height_floor_scales_with_source_height():
+    p_1080 = PolicyParams(source_w=1920, source_h=1080, min_crop_h=960.0)
+    p_4k = PolicyParams(source_w=3840, source_h=2160, min_crop_h=960.0)
+    assert abs(height_floor(p_4k) - 2 * height_floor(p_1080)) < 1e-9
+
+
 # --- bust cells and the crown invariant -------------------------------------
 
 
@@ -507,7 +518,7 @@ def test_split_cell_falls_back_to_full_box_without_bust():
     box_b = Rect(1400, 200, 150, 700)
     cell_ratio = p.ratio * 2
     expected = clamp_to_source(
-        fit_ratio(expand(box_a, p.margin), cell_ratio), p.source_w, p.source_h, cell_ratio, p.min_crop_h / 2, p.eye_line
+        fit_ratio(expand(box_a, p.margin), cell_ratio), p.source_w, p.source_h, cell_ratio, height_floor(p) / 2, p.eye_line
     )
 
     state = initial_state(p)

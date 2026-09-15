@@ -27,7 +27,7 @@ help:
 	$(info   make bench         latence .pt contre .engine, lot unitaire, sur les images du corpus)
 	$(info   make probe         go/no-go OBS et latences, sort 0 si tout passe)
 	$(info   make setup         (re)construit la scène sur la vidéo de test)
-	$(info   make setup-camera  (re)construit la scène sur la caméra)
+	$(info   make setup-camera  (re)construit la scène sur la caméra (AvoCam si avocam_ip est configuré))
 	$(info   make run           la boucle de recadrage)
 	$(info   make corpus        rejeu déterministe hors OBS : CLIP vers TRACE et SUMMARY)
 	$(info   make replay        rejoue TRACE (--from-trace) vers REPLAY et REPLAY_SUMMARY, sans décoder ni détecter)

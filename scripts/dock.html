@@ -86,7 +86,7 @@ const STAGE_LABELS = { capture: 'Capture', detect: 'Détection', policy: 'Politi
 
 const FIELDS = [
     { id: 'margin',      label: 'Marge',                     min: 0,   max: 1.5,  step: 0.01, fmt: v => v.toFixed(2) },
-    { id: 'min_crop_h',  label: 'Hauteur crop min',           min: 100, max: 2160, step: 10,   fmt: v => Math.round(v) + ' px' },
+    { id: 'min_crop_h',  label: 'Hauteur crop min (1080p)',   min: 100, max: 1080, step: 10,   fmt: v => Math.round(v) + ' px' },
     { id: 'dead_zone',   label: 'Zone morte',                 min: 0,   max: 0.5,  step: 0.01, fmt: v => v.toFixed(2) },
     { id: 'dwell_ms',    label: 'Délai avant bascule',        min: 0,   max: 3000, step: 50,   fmt: v => Math.round(v) + ' ms' },
     { id: 'ease_ms',     label: 'Durée de transition',        min: 0,   max: 2000, step: 20,   fmt: v => Math.round(v) + ' ms' },
@@ -172,7 +172,6 @@ function recentlyChanged(field) {
 function syncControls(state) {
     for (const f of FIELDS) {
         const input = $('s-' + f.id);
-        if (f.id === 'min_crop_h' && state.source_h) input.max = state.source_h;
         if (recentlyChanged(f.id) || document.activeElement === input) continue;
         const value = f.id === 'fps' ? state.fps : state.params[f.id];
         input.value = value;

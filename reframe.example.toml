@@ -38,10 +38,10 @@ features = false  # extraction visage/pose pour l'overlay OBS (coûteux)
 
 [policy]
 margin = 0.18
-min_crop_h = 960.0
+min_crop_h = 960.0  # pixels d'une source 1080p, mis à l'échelle selon la hauteur de la source
 dead_zone = 0.12
 dwell_ms = 400.0
-ease_ms = 320.0  # durée à la distance de référence (675 px)
+ease_ms = 320.0  # durée à la distance de référence (675 px d'une source 1080p, mise à l'échelle)
 ease_min_ms = 180.0
 ease_max_ms = 900.0
 snap = false  # true = coupe instantanée, jamais de transition animée
@@ -60,3 +60,5 @@ track_hold_ms = 500.0
 # scripts.setup_scene uniquement : le choix de la source RF Cam.
 media_file = ""  # vide = fixture de test par défaut, sinon la caméra
 camera = false  # true = force une caméra même si la fixture existe
+avocam_ip = ""  # IP de l'iPhone AvoCam ; avec --camera, RF Cam devient une source AvoCam
+avocam_port = 5000  # port UDP attribué à cette caméra par le contrôleur AvoCam
