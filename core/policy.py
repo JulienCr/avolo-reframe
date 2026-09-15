@@ -24,14 +24,11 @@ class PolicyParams:
     split_enabled: bool = True
     split_min_gap: float = 0.15
     split_enter_ms: float = 600.0
-    # track_hold_ms and split_exit_ms both sit above the measured 4850 ms
-    # mean dropout stretch for a lost subject: shorter values would
-    # recreate the single/split oscillation this feature removes.
-    split_exit_ms: float = 3000.0
-    track_hold_ms: float = 6000.0
-    # Temporary measurement variant: lets a due mode switch cut through an
-    # in-flight ease lock instead of waiting for it to end. Off by default.
-    mode_switch_through_ease: bool = False
+    # Chosen by a sweep on the YOLO11-pose corpus trace: the fastest exit
+    # that adds no short splits, given a median YOLO dropout of 250-333 ms.
+    # Vision users should override both in reframe.toml.
+    split_exit_ms: float = 500.0
+    track_hold_ms: float = 500.0
     # A third down from the top; a starting value to tune, not a fixed law.
     eye_line: float = 0.33
     max_zoom: float = 1.5
@@ -460,12 +457,6 @@ def step(
     state: PolicyState, boxes: list[Rect], now_ms: float, p: PolicyParams
 ) -> tuple[PolicyState, Command | None]:
     locked = state.busy_until_ms is not None and now_ms < state.busy_until_ms
-    if locked and not p.mode_switch_through_ease:
-        # Tracks keep ageing through the lock: otherwise a subject present
-        # the whole time gets declared lost the instant the lock lifts (its
-        # last_seen_ms would have been frozen at the pre-lock value).
-        tracked = replace(state, tracks=_update_tracks(state.tracks, boxes, now_ms, p))
-        return _locked_step(tracked, boxes, now_ms, p)
 
     if not p.split_enabled:
         if locked:

@@ -66,7 +66,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split-enter-ms", type=float, default=defaults.split_enter_ms)
     parser.add_argument("--split-exit-ms", type=float, default=defaults.split_exit_ms)
     parser.add_argument("--track-hold-ms", type=float, default=defaults.track_hold_ms)
-    parser.add_argument("--mode-switch-through-ease", action="store_true", default=defaults.mode_switch_through_ease)
     args = parser.parse_args()
     if (args.clip is None) == (args.from_trace is None):
         parser.error("indiquez soit <clip>, soit --from-trace, jamais les deux ni aucun des deux.")
@@ -574,7 +573,6 @@ def main() -> None:
         split_enter_ms=args.split_enter_ms,
         split_exit_ms=args.split_exit_ms,
         track_hold_ms=args.track_hold_ms,
-        mode_switch_through_ease=args.mode_switch_through_ease,
     )
 
     if args.from_trace is not None:

@@ -254,7 +254,7 @@ def test_split_survives_losing_a_subject():
     assert cmd is not None and state.mode == "split"
 
     t = p.split_enter_ms
-    while t < p.split_enter_ms + 5000.0:  # the measured mean dropout stretch
+    while t < p.split_enter_ms + p.track_hold_ms - 200.0:  # strictly below track_hold_ms
         t += 200.0
         state, _ = step(state, [box_a], t, p)
         assert state.mode == "split"
@@ -637,14 +637,16 @@ def test_split_entry_resumes_after_one_missed_frame():
     state, cmd = step(state, [box_a, box_b], 0.0, p)  # countdown starts at t=0
     assert cmd is None and state.mode == "single"
 
-    state, cmd = step(state, [box_a], 500.0, p)  # box_b stale but ready: suspended
+    miss_1 = p.track_hold_ms * 0.3
+    miss_2 = p.track_hold_ms * 0.6
+    state, cmd = step(state, [box_a], miss_1, p)  # box_b stale but tracked: suspended
     assert cmd is None and state.mode == "single"
 
-    state, cmd = step(state, [box_a], 650.0, p)  # still suspended, past split_enter_ms
+    state, cmd = step(state, [box_a], miss_2, p)  # still suspended, track still alive
     assert cmd is None and state.mode == "single"
 
     # First fresh ready frame at or after split_enter_ms from the start (t=0).
-    state, cmd = step(state, [box_a, box_b], 700.0, p)
+    state, cmd = step(state, [box_a, box_b], p.split_enter_ms + 100.0, p)
     assert cmd is not None
     assert state.mode == "split"
 
@@ -788,7 +790,7 @@ def test_split_exit_by_not_ready_cuts_on_the_same_frame():
     assert exit_cmd.frm is None
 
 
-# --- mode_switch_through_ease: temporary measurement variant ---------------
+# --- a due mode switch always cuts through an in-flight ease lock ----------
 
 
 def _lock_in_single_mode(p: PolicyParams) -> PolicyState:
@@ -801,25 +803,8 @@ def _lock_in_single_mode(p: PolicyParams) -> PolicyState:
     return state
 
 
-def test_mode_switch_waits_for_the_ease_lock_by_default():
+def test_mode_switch_cuts_during_the_lock():
     p = PolicyParams(ease_ms=5000.0)
-    box_a = Rect(300, 200, 150, 700)
-    box_b = Rect(1400, 200, 150, 700)
-    state = _lock_in_single_mode(p)
-    busy_until = state.busy_until_ms
-
-    t = p.dwell_ms
-    while True:
-        t += 100.0
-        if t >= busy_until:  # busy_until itself is already unlocked
-            break
-        state, cmd = step(state, [box_a, box_b], t, p)
-        assert cmd is None
-        assert state.mode == "single"  # the due switch waits for the lock
-
-
-def test_mode_switch_through_ease_cuts_during_the_lock():
-    p = PolicyParams(ease_ms=5000.0, mode_switch_through_ease=True)
     box_a = Rect(300, 200, 150, 700)
     box_b = Rect(1400, 200, 150, 700)
     state = _lock_in_single_mode(p)
