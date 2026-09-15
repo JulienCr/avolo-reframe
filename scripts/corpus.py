@@ -66,6 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split-enter-ms", type=float, default=defaults.split_enter_ms)
     parser.add_argument("--split-exit-ms", type=float, default=defaults.split_exit_ms)
     parser.add_argument("--track-hold-ms", type=float, default=defaults.track_hold_ms)
+    parser.add_argument("--mode-switch-through-ease", action="store_true", default=defaults.mode_switch_through_ease)
     args = parser.parse_args()
     if (args.clip is None) == (args.from_trace is None):
         parser.error("indiquez soit <clip>, soit --from-trace, jamais les deux ni aucun des deux.")
@@ -178,28 +179,32 @@ def _crown_check(crown: float, applied_top: float) -> dict:
     return {"crown": crown, "margin": margin, "unreachable": unreachable, "cut": None if unreachable else margin < 0}
 
 
-def crown_checks(state: PolicyState, now_ms: float, boxes: list[Rect]) -> list[dict]:
-    """Crown containment of the rect actually applied this frame -- state.cells
-    or state.current, not the freshly computed target the two can diverge
-    from for many frames after a commit.
+def crown_checks(state: PolicyState, boxes: list[Rect]) -> list[dict]:
+    """Crown containment of the rect actually applied this frame, keyed off
+    this frame's own detections -- never state.tracks, so the rule is the
+    same for any policy that reshapes tracking.
 
-    Split pairing follows state.tracks (sorted by cx, like _cell_rects),
-    filtered to a track re-detected this frame; a held/stale track has no
-    fresh crown to check.
+    Split: a box is checked against the applied cell whose horizontal span
+    contains its cx (nearest cx if several qualify); a box framed by no
+    cell is skipped. Single: checked against state.current when its span
+    contains the box's cx.
     """
     if state.mode == "split" and state.cells is not None:
-        alive = [t for t in state.tracks if t is not None]
-        if len(alive) != 2:
-            return []
-        top, bottom = sorted(alive, key=lambda t: t.box.cx)
-        return [
-            _crown_check(track.box.crown, cell.y)
-            for track, cell in zip((top, bottom), state.cells)
-            if track.last_seen_ms == now_ms and track.box.crown is not None
-        ]
-    if len(boxes) == 1 and boxes[0].crown is not None:
-        return [_crown_check(boxes[0].crown, state.current.y)]
-    return []
+        checks = []
+        for box in boxes:
+            if box.crown is None:
+                continue
+            containing = [c for c in state.cells if c.x <= box.cx <= c.right]
+            if not containing:
+                continue
+            cell = min(containing, key=lambda c: abs(c.cx - box.cx))
+            checks.append(_crown_check(box.crown, cell.y))
+        return checks
+    return [
+        _crown_check(box.crown, state.current.y)
+        for box in boxes
+        if box.crown is not None and state.current.x <= box.cx <= state.current.right
+    ]
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -487,7 +492,7 @@ def run_loop(
             applied_mode = cmd.mode
 
         placement = crop_vs_subjects(box_list, target.cx) if target is not None else "n/a"
-        checks = crown_checks(state, pts_ms, rects)
+        checks = crown_checks(state, rects)
 
         entry = {
             "index": index,
@@ -569,6 +574,7 @@ def main() -> None:
         split_enter_ms=args.split_enter_ms,
         split_exit_ms=args.split_exit_ms,
         track_hold_ms=args.track_hold_ms,
+        mode_switch_through_ease=args.mode_switch_through_ease,
     )
 
     if args.from_trace is not None:
