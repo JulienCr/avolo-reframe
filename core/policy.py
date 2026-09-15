@@ -24,9 +24,9 @@ class PolicyParams:
     split_enabled: bool = True
     split_min_gap: float = 0.15
     split_enter_ms: float = 600.0
-    # Chosen by a sweep on the YOLO11-pose corpus trace: the fastest exit
-    # that adds no short splits, given a median YOLO dropout of 250-333 ms.
-    # Vision users should override both in reframe.toml.
+    # split_exit_ms and track_hold_ms: picked by a sweep on the YOLO11-pose
+    # corpus trace (median dropout 250-333 ms) for a 500 ms median exit at
+    # one short split under 1.5 s. Vision setups override both in reframe.toml.
     split_exit_ms: float = 500.0
     track_hold_ms: float = 500.0
     # A third down from the top; a starting value to tune, not a fixed law.
@@ -199,15 +199,19 @@ def _match_two_live(
 
 def _update_tracks(
     tracks: tuple[Track | None, Track | None], boxes: list[Rect], now_ms: float, p: PolicyParams
-) -> tuple[Track | None, Track | None]:
+) -> tuple[tuple[Track | None, Track | None], bool]:
     """Match boxes to the two tracking slots, globally when both are live.
 
-    An unmatched slot keeps its last box for track_hold_ms, then dies:
-    this is what lets split survive a short detector dropout, whatever
-    the detector.
+    An unmatched slot keeps its last box for track_hold_ms, then dies before
+    matching runs: a returning box refills it as a brand-new track rather
+    than reviving a slot whose detections had already expired. This is what
+    lets split survive a short detector dropout, whatever the detector.
+
+    Returns the updated slots and whether a slot died on this call.
     """
+    expired = [t is not None and now_ms - t.last_seen_ms >= p.track_hold_ms for t in tracks]
+    updated: list[Track | None] = [None if e else t for t, e in zip(tracks, expired)]
     remaining = list(boxes)
-    updated = list(tracks)
     live = [i for i, t in enumerate(updated) if t is not None]
 
     if len(live) == 2 and remaining:
@@ -224,9 +228,7 @@ def _update_tracks(
         if track is None and remaining:
             updated[i] = Track(remaining.pop(0), now_ms)
 
-    return tuple(
-        None if t is not None and now_ms - t.last_seen_ms >= p.track_hold_ms else t for t in updated
-    )
+    return tuple(updated), any(expired)
 
 
 def _enter_split(state: PolicyState, alive: list[Track], now_ms: float, p: PolicyParams) -> tuple[PolicyState, Command]:
@@ -464,10 +466,13 @@ def step(
             return _locked_step(state, boxes, now_ms, p)
         return _step_single(state, boxes, now_ms, p)
 
-    tracks = _update_tracks(state.tracks, boxes, now_ms, p)
+    tracks, expired_now = _update_tracks(state.tracks, boxes, now_ms, p)
     alive = [t for t in tracks if t is not None]
     ready = len(alive) == 2 and split_ready([t.box for t in alive], p)
     tracked = replace(state, tracks=tracks)
+    # A slot that died on this very call carries no live evidence forward:
+    # the single-mode enter countdown must restart, not resume, on top of it.
+    enter_since_ms = None if expired_now else state.split_enter_since_ms
 
     if state.mode == "split":
         if len(alive) < 2:
@@ -496,10 +501,10 @@ def step(
     fresh_both = all(t.last_seen_ms == now_ms for t in alive)
     if not fresh_both:
         if locked:
-            return _locked_step(tracked, boxes, now_ms, p)
-        return _step_single(tracked, boxes, now_ms, p)
+            return _locked_step(replace(tracked, split_enter_since_ms=enter_since_ms), boxes, now_ms, p)
+        return _step_single(replace(tracked, split_enter_since_ms=enter_since_ms), boxes, now_ms, p)
 
-    since = state.split_enter_since_ms if state.split_enter_since_ms is not None else now_ms
+    since = enter_since_ms if enter_since_ms is not None else now_ms
     if now_ms - since >= p.split_enter_ms:
         return _enter_split(tracked, alive, now_ms, p)
     if locked:
