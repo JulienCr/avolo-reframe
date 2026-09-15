@@ -11,9 +11,12 @@ import hashlib
 import statistics
 import sys
 import time
+from pathlib import Path
 
 from adapters.frames import FrameSource
-from adapters.obsws import ObsWs, ObsWsError
+from adapters.obsws import ObsWs, ObsWsError, ensure_scene_collection
+from scripts.layout import COLLECTION_NAME
+from scripts.run import DEFAULT_CONFIG_PATH, apply_config
 
 _LABEL_WIDTH = 34
 
@@ -24,6 +27,8 @@ _PROBE_QUADRANT_NAMES = ("RF Probe Q1", "RF Probe Q2", "RF Probe Q3", "RF Probe 
 _QUADRANT_COLORS = (0xFFE6194B, 0xFF3CB44B, 0xFF4363D8, 0xFFFFE119)
 _REAL_SCENE = "AVOLO Reframe POC"
 _REAL_SOURCE = "RF Cam"
+
+PROBE_CONFIG_DESTS = {"url", "password"}
 
 
 def _row(label: str, value: object) -> str:
@@ -76,21 +81,33 @@ def check_canevas(obs: ObsWs) -> bool:
 
 
 _AVCAPTURE_KINDS = ("macos-avcapture", "macos-avcapture-fast", "av_capture_input_v2")
+_DSHOW_KINDS = ("dshow_input",)
+_DEVICE_PROPERTY_BY_KIND = {"dshow_input": "video_device_id"}
 
 
 def _obs_avcapture_inputs(obs: ObsWs) -> list[tuple[str, str, str]]:
     inputs = obs.request("GetInputList")["inputs"]
     result = []
     for item in inputs:
-        if item["inputKind"] not in _AVCAPTURE_KINDS:
+        kind = item["inputKind"]
+        if kind not in _AVCAPTURE_KINDS and kind not in _DSHOW_KINDS:
             continue
+        property_name = _DEVICE_PROPERTY_BY_KIND.get(kind, "device")
         settings = obs.request("GetInputSettings", {"inputName": item["inputName"]})["inputSettings"]
-        result.append((item["inputName"], item["inputKind"], settings.get("device", "")))
+        result.append((item["inputName"], kind, settings.get(property_name, "")))
     return result
 
 
 def check_cameras(obs: ObsWs) -> None:
     print("\n=== 3. Caméras et Center Stage ===")
+    if sys.platform != "darwin":
+        print("Non applicable : Center Stage est spécifique à AVFoundation (macOS).")
+        obs_cams = _obs_avcapture_inputs(obs)
+        if obs_cams:
+            print("Entrées OBS de capture caméra :")
+            for name, kind, device_id in obs_cams:
+                print(_row(f"  {name} ({kind})", f"device={device_id}"))
+        return
     try:
         import AVFoundation as AV
 
@@ -171,7 +188,17 @@ def check_latences(obs: ObsWs, quick: bool) -> None:
         print("Ignoré (--quick).")
         return
 
-    scene_name = obs.request("GetSceneList")["currentProgramSceneName"]
+    scene_list = obs.request("GetSceneList")
+    if _REAL_SCENE in (s["sceneName"] for s in scene_list["scenes"]):
+        scene_name = _REAL_SCENE
+    else:
+        scene_name = scene_list["currentProgramSceneName"]
+    # Studio mode with an empty program yields None. Querying the program in that
+    # state coincided with an OBS 32.2.2 crash (heap corruption, 2026-09-15).
+    if scene_name is None:
+        print(f"Ignoré : ni scène « {_REAL_SCENE} » ni scène au programme (mode studio sans transition ?).")
+        return
+    print(_row("Scène mesurée", scene_name))
     shot_640 = FrameSource(obs, scene_name, width=640, quality=75)
     shot_1920 = FrameSource(obs, scene_name, width=1920, quality=75)
 
@@ -316,17 +343,29 @@ def check_batch(obs: ObsWs) -> None:
 
 
 def main() -> int:
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=Path, default=None)
+    pre_args, _ = pre.parse_known_args()
+
     parser = argparse.ArgumentParser(description="Diagnostic go/no-go pour le recadrage hors processus.")
+    parser.add_argument(
+        "--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Fichier de config TOML (silencieux si absent)."
+    )
     parser.add_argument("--url", default="ws://127.0.0.1:4455")
     parser.add_argument("--password", default=None)
     parser.add_argument("--quick", action="store_true", help="ignore la série de latences")
+
+    config_path = pre_args.config or DEFAULT_CONFIG_PATH
+    status = apply_config(parser, config_path, explicit=pre_args.config is not None, dests=PROBE_CONFIG_DESTS)
     args = parser.parse_args()
+    print(status)
 
     try:
         with ObsWs(url=args.url, password=args.password, timeout=5.0) as obs:
             version_ok = check_environnement(obs)
             canvas_ok = check_canevas(obs)
             check_cameras(obs)
+            ensure_scene_collection(obs, COLLECTION_NAME)
             check_latences(obs, args.quick)
             crop_ok = check_crop(obs)
             check_batch(obs)

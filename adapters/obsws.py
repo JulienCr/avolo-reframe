@@ -98,12 +98,12 @@ class ObsWs:
                 delay = min(delay * 2, _BACKOFF_CAP)
         raise ObsWsError(f"could not reconnect to {self._url}: {last_error}")
 
-    def request(self, request_type: str, data: dict | None = None) -> dict:
+    def request(self, request_type: str, data: dict | None = None, timeout: float | None = None) -> dict:
         ws = self._require_connected()
         request_id = str(next(self._ids))
         d = {"requestType": request_type, "requestId": request_id, "requestData": data or {}}
         ws.send(json.dumps({"op": _OP_REQUEST, "d": d}))
-        resp = self._await(_OP_REQUEST_RESPONSE, lambda d: d.get("requestId") == request_id)
+        resp = self._await(_OP_REQUEST_RESPONSE, lambda d: d.get("requestId") == request_id, timeout=timeout)
         return self._unwrap(resp)
 
     def request_batch(
@@ -165,11 +165,11 @@ class ObsWs:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         return base64.b64encode(digest).decode("utf-8")
 
-    def _await(self, op: int, matches) -> dict:
-        return self._recv_op(self._require_connected(), op, matches)
+    def _await(self, op: int, matches, timeout: float | None = None) -> dict:
+        return self._recv_op(self._require_connected(), op, matches, timeout=timeout)
 
-    def _recv_op(self, ws: ClientConnection, op: int, matches) -> dict:
-        deadline = time.monotonic() + self._timeout
+    def _recv_op(self, ws: ClientConnection, op: int, matches, timeout: float | None = None) -> dict:
+        deadline = time.monotonic() + (timeout if timeout is not None else self._timeout)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -186,3 +186,33 @@ class ObsWs:
             # Discard events (op 5) and any frame not matching what we asked for.
             if frame.get("op") == op and matches(frame.get("d", {})):
                 return frame["d"]
+
+
+_COLLECTION_SWITCH_TIMEOUT_S = 30.0
+
+
+def ensure_scene_collection(obs: ObsWs, collection_name: str) -> None:
+    """Switch OBS to collection_name, creating it if absent; refuses while live.
+
+    A heavy production collection can take longer than the client's default
+    request timeout to finish switching, so this uses its own longer one.
+    """
+    current = obs.request("GetSceneCollectionList")
+    previous = current["currentSceneCollectionName"]
+    if previous == collection_name:
+        print(f"Collection de scènes déjà active : {collection_name}")
+        return
+
+    stream_active = obs.request("GetStreamStatus")["outputActive"]
+    record_active = obs.request("GetRecordStatus")["outputActive"]
+    if stream_active or record_active:
+        print(
+            f"Refus de changer de collection de scènes ({previous} -> {collection_name}) : "
+            "un stream ou un enregistrement est en cours."
+        )
+        raise SystemExit(1)
+
+    exists = collection_name in current["sceneCollections"]
+    request_type = "SetCurrentSceneCollection" if exists else "CreateSceneCollection"
+    obs.request(request_type, {"sceneCollectionName": collection_name}, timeout=_COLLECTION_SWITCH_TIMEOUT_S)
+    print(f"Collection de scènes : {previous} -> {collection_name}")

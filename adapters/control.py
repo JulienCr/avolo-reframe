@@ -6,6 +6,7 @@ read by the HTTP handlers below; a single lock guards both sides.
 
 import dataclasses
 import json
+import sys
 import threading
 import time
 from collections import deque
@@ -82,7 +83,7 @@ class ControlState:
             self.crop = crop
             self.mode = mode
             self.cells = cells
-            self._iter_times.append(time.monotonic())
+            self._iter_times.append(time.perf_counter())
             self.detections.append(bool(boxes))
             for stage, ms in stage_ms.items():
                 self.stats[stage].append(ms)
@@ -129,8 +130,11 @@ class ControlState:
     def snapshot(self) -> dict:
         with self.lock:
             rate = 0.0
-            if len(self._iter_times) >= 2:
-                rate = (len(self._iter_times) - 1) / (self._iter_times[-1] - self._iter_times[0])
+            span = self._iter_times[-1] - self._iter_times[0] if len(self._iter_times) >= 2 else 0.0
+            # Not monotonic(): on Windows with Python 3.12 it steps by 15.6 ms, so two
+            # iterations could share a timestamp and divide by zero.
+            if span > 0:
+                rate = (len(self._iter_times) - 1) / span
             detection_rate = sum(self.detections) / len(self.detections) if self.detections else 0.0
             stats = {
                 stage: {"median": _percentile(list(vals), 0.5), "p90": _percentile(list(vals), 0.9)}
@@ -292,6 +296,10 @@ class ControlHandler(BaseHTTPRequestHandler):
 
 class ControlServer(ThreadingHTTPServer):
     daemon_threads = True  # let Ctrl-C exit even with a request in flight
+    if sys.platform == "win32":
+        # Windows SO_REUSEADDR lets a second process silently rebind the same
+        # port instead of failing, unlike on POSIX: refuse that here.
+        allow_reuse_address = False
 
     def __init__(self, state: ControlState, dock_html: bytes, overlay_html: bytes, port: int) -> None:
         super().__init__(("127.0.0.1", port), ControlHandler)
