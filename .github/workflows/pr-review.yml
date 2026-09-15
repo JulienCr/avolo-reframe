@@ -1,0 +1,81 @@
+name: Review IA des PR
+
+# Aristarque (JulienCr/gh-actions) reviews on open with the doctrine below, never failing the job.
+# A missing OLLAMA_API_KEY is silent: no comment means "not reviewed", not "clean".
+# Top-level comment, not a review; no re-run on push, so comment "@aristarque review".
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Numéro de la PR à relire'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+  # The 👀 reaction targets a PR conversation comment, which the API treats as an issue comment.
+  issues: write
+
+jobs:
+  review:
+    # Security, not comfort: issue_comment runs with secrets on anyone's comment, and this
+    # repo is public. Without the author allowlist a stranger can drain the Ollama key.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
+      || (github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && github.event.comment.user.login == 'JulienCr'
+          && contains(github.event.comment.body, '@aristarque review'))
+    runs-on: ubuntu-latest
+    # Job level on purpose: at workflow level, a stranger's skipped comment run would
+    # still join the group and cancel the review in progress.
+    concurrency:
+      group: pr-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+      cancel-in-progress: true
+    # Parallel passes then a merge: up to twice the action's internal timeout, plus margin.
+    timeout-minutes: 40
+    steps:
+      # A comment-triggered run shows no check on the PR; this is the only acknowledgement.
+      - name: Accuser réception de la mention
+        if: github.event_name == 'issue_comment'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST \
+            "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=eyes
+
+      # PR head, not the merge commit, so the line numbers the model cites match the diff.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || format('refs/pull/{0}/head', github.event.issue.number || inputs.pr) }}
+
+      # @main, not a major tag: prompt fixes land here without a commit. Tenable because
+      # gh-actions CI rejects a stale dist/ and the action never fails the job.
+      - uses: JulienCr/gh-actions/pr-review@main
+        with:
+          pr: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+          # Kill switch in Settings → Variables. Set it to false to turn off: a DELETED
+          # variable reads as empty, which the action treats as on.
+          enable: ${{ vars.ENABLE_ARISTARQUE }}
+          ollama-api-key: ${{ secrets.OLLAMA_API_KEY }}
+          # The ADR and TODO.md hold the settled decisions, the two poc-*.md the measurements
+          # behind them (Mac, then target): a rule without its figure gets undone by reflex.
+          # Missing paths are ignored, so poc-windows.md applies once the port lands.
+          doctrine: |
+            CLAUDE.md
+            docs/adr/0001-avolo-reframe.md
+            TODO.md
+            docs/poc-mac-webcam.md
+            docs/poc-windows.md
+          # An 80 KB illustrated page, and replay outputs that get compared, not read.
+          skip: |
+            docs/pipeline.html
+            tests/corpus/reference-summary*.json
