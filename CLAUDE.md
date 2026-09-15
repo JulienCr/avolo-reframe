@@ -91,7 +91,7 @@ Détail et mesures dans [`docs/poc-windows.md`](docs/poc-windows.md).
 
 - **`time.perf_counter()`, jamais `time.monotonic()`** : sur Windows + Python 3.12, `monotonic()` avance par paliers de 15,6 ms.
 - **Ne jamais interroger la scène de programme quand elle peut être vide** — un `GetCurrentProgramScene` sur un programme vide a coïncidé avec un plantage d'OBS.
-- `setup_scene` et `probe` basculent sur la collection de scènes dédiée « AVOLO Reframe » ; ne jamais toucher aux collections de la machine de production.
+- `setup_scene` et `probe` basculent sur la collection de scènes dédiée « AVOLO Reframe » et y laissent OBS : la collection quittée (affichée) se rouvre à la main. Ne jamais modifier les collections de production.
 - **Le corpus se rejoue en `.pt`, la boucle en direct peut tourner en `.engine`** : un moteur TensorRT n'est pas garanti déterministe et est lié au couple GPU + pilote qui l'a produit.
 
 ## Mesure

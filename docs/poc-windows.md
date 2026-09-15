@@ -185,7 +185,7 @@ GPU + pilote qui l'a produit. D'où la règle : les rejeux du corpus utilisent
   erreur.** Ce comportement est propre à Windows ; l'option est désormais
   désactivée sur `win32`.
 - **Un chemin Windows dans le TOML a besoin de `/` ou de guillemets simples**
-  — le antislash nu casse le parseur TOML.
+  — l'antislash nu casse le parseur TOML.
 
 ### Un plantage d'OBS, non reproduit à volonté
 
@@ -203,8 +203,9 @@ programme quand elle peut être vide.**
 
 `setup_scene` et `probe` basculent OBS sur une collection dédiée « AVOLO
 Reframe » (créée si absente), et refusent de le faire pendant un direct ou un
-enregistrement. Les collections de la machine de production ne sont jamais
-touchées en dehors de celle-ci.
+enregistrement. Les autres collections ne sont jamais modifiées, mais OBS reste
+sur « AVOLO Reframe » après coup : la collection quittée, que le script affiche,
+se rouvre à la main.
 
 ## Ce qui a changé dans le code
 
