@@ -258,7 +258,7 @@ def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int, str]:
     if len(cam_uuids) != 1:
         raise SceneNotReady(
             f"Scène « {scene} » : les items {CAM_NAME} référencent des sources différentes "
-            "(reconstruction en cours ?). Nouvel essai."
+            "(reconstruction en cours ?)"
         )
     cam_uuid = cam_uuids.pop()
 
@@ -434,8 +434,8 @@ def apply_source_resize(
     new_source_w: int,
     new_source_h: int,
 ) -> tuple[PolicyParams, PolicyState, ApplyFn, ApplyFn]:
-    """Adopt a source's new size: the old pixel-space state and dock params
-    are meaningless on a resized source, so they are replaced, not rescaled.
+    """Adopt a source's new size: the pixel-space policy state is reset, not
+    rescaled; params and dock keep their tuning, only source_w/source_h change.
     """
     print(f"Taille de la source changée : {p.source_w}x{p.source_h} -> {new_source_w}x{new_source_h}.")
     p = dataclasses.replace(p, source_w=new_source_w, source_h=new_source_h)
