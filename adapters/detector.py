@@ -60,7 +60,7 @@ def build_detector(name: str, upper_body: bool, yolo_model: str = "models/yolo11
     """One factory for scripts.run and scripts.corpus.
 
     Imports are local to each branch so importing this module never pulls
-    in pyobjc (macOS-only) or torch (Windows/Linux-only) on the wrong OS.
+    in pyobjc (macOS-only) or torch (Windows-only) on the wrong OS.
     """
     if name in ("pose", "vision"):
         if sys.platform != "darwin":
@@ -77,11 +77,18 @@ def build_detector(name: str, upper_body: bool, yolo_model: str = "models/yolo11
 
         return VisionDetector(upper_body=upper_body)
 
+    try:
+        from adapters.detect_yolo import YoloDetector
+    except ImportError as exc:
+        print(
+            "torch et ultralytics ne sont installés que sur Windows (voir pyproject.toml) : "
+            f"{exc}"
+        )
+        sys.exit(1)
+
     model_path = Path(yolo_model)
     if not model_path.is_file():
         print(f"Modèle YOLO introuvable : {model_path}. Téléchargez-le avec « make model MODEL={model_path.as_posix()} ».")
         sys.exit(1)
-
-    from adapters.detect_yolo import YoloDetector
 
     return YoloDetector(str(model_path), bust=upper_body)

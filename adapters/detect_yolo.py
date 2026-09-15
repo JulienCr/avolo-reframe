@@ -1,4 +1,4 @@
-"""Body-pose detection via YOLO11-pose (Windows/Linux, CUDA required)."""
+"""Body-pose detection via YOLO11-pose (Windows, CUDA required)."""
 
 import io
 import os
@@ -35,7 +35,12 @@ class YoloDetector:
         self._model = YOLO(model_path)
         engine = "-trt" if Path(model_path).suffix == ".engine" else ""
         self.name = f"yolo-{Path(model_path).stem}{engine}" + ("-bust" if bust else "")
-        self._predict(Image.new("RGB", (640, 360)))
+        warmup_result = self._predict(Image.new("RGB", (640, 360)))
+        if warmup_result.keypoints is None:
+            raise RuntimeError(
+                f"« {model_path} » n'est pas un modèle de pose (pas de keypoints) : "
+                "utilisez un poids *-pose (ex. yolo11m-pose.pt)."
+            )
 
     def detect(self, jpeg: bytes) -> list[Box]:
         return [pose.box for pose in self.detect_poses(jpeg)]

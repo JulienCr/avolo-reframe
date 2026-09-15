@@ -171,7 +171,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--upper-body", action=argparse.BooleanOptionalAction, default=False,
-        help="Vision : tête+torse au lieu du corps entier.",
+        help="Tête+torse au lieu du corps entier (buste pour pose et yolo).",
     )
     parser.add_argument("--yolo-model", default="models/yolo11m-pose.pt", help="Chemin du modèle yolo (.pt ou .engine).")
     parser.add_argument("--fps", type=float, default=12.0)

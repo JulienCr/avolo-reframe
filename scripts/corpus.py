@@ -251,6 +251,11 @@ def main() -> None:
     args = parse_args()
     video = VideoFrames(args.clip, fps=args.fps, width=args.width, start_s=args.start, duration_s=args.duration)
     probe = video.probe()
+    if args.yolo_model.endswith(".engine"):
+        print(
+            "Attention : un moteur TensorRT n'est pas garanti déterministe et est lié à ce "
+            "GPU/pilote, alors que la référence du corpus est produite en .pt."
+        )
     detector = build_detector(args.detector, args.upper_body, args.yolo_model)
 
     p = PolicyParams(
