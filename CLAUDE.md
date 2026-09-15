@@ -103,7 +103,7 @@ Ne rien affirmer sur la cadence de détection, la latence ou un changement de mo
 
 **Écarter systématiquement la première mesure.** Le démarrage à froid a produit deux conclusions fausses dans ce dépôt : 233 ms sur un `GetSourceScreenshot` qui en fait 5, et 115 ms sur une détection qui en fait 16. Une conclusion sur n=1 est une conclusion sur du bruit.
 
-Le corpus mesure maintenant les bascules split et le crâne coupé sur le cadre **appliqué** (`scripts.corpus --from-trace`, chiffres dans `tests/corpus/README.md`). Il manque encore un extrait avec bascules de plan annotées.
+Le corpus mesure maintenant les bascules split et le crâne coupé sur le cadre **commandé par la politique**, pas sur ce qu'OBS affiche pendant la transition : relire `cropTop` depuis un autre processus reste la seule preuve d'application (`scripts.corpus --from-trace`, chiffres dans `tests/corpus/README.md`). Il manque encore un extrait avec bascules de plan annotées.
 
 ## Langue
 

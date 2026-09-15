@@ -261,10 +261,11 @@ image dont la détection justifiait encore le split) :
 | Défauts (`split_exit_ms` 3000, `track_hold_ms` 6000) | 3,8 s | 6,0 s |
 | Réglage live de Julien (entrée 100, sortie 100, maintien 2000, transition 1200) | 1,2 s | 2,0 s |
 
-`_split_ready` évalue des pistes mémorisées : le split survit donc sur un
-sujet qui n'est plus détecté, et plus de la moitié des entrées en split se
-produisent sur une piste périmée. Baisser `track_hold_ms` échange de la
-latence contre du scintillement — ce n'est pas un réglage gratuit.
+Avant le correctif ci-dessous, `_split_ready` évaluait des pistes mémorisées :
+le split survivait donc sur un sujet qui n'était plus détecté, et plus de la
+moitié des entrées en split se produisaient sur une piste périmée. Baisser
+`track_hold_ms` échangeait de la latence contre du scintillement — ce n'était
+pas un réglage gratuit.
 
 Pour situer l'ordre de grandeur : sur un décrochage YOLO d'un sujet présent
 des deux côtés d'un trou de détection, la médiane est de 333 ms, le p90 de

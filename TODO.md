@@ -61,7 +61,8 @@ derrière elle. L'instrument existe désormais ; les mesures, non.
 - [ ] **Distinguer « le sujet est sorti du cadre » de « la détection a
       décroché ».** Mesuré le 15 septembre 2026 (`tests/corpus/tools/edge_exits.py`) :
       une dernière boîte en bord de cadre ne prédit pas mieux un « jamais
-      revenu » qu'une boîte à mi-cadre (7,4 % contre 9,2 % sous 10 s), et la
+      revenu » qu'une boîte à mi-cadre (6,6 % contre 9,0 % sous 10 s, pertes
+      censurées par la fin de trace exclues), et la
       vitesse vers le bord ne sépare pas non plus les deux catégories — **aucun
       maintien plus court n'est justifié en bord de cadre**, résultat négatif.
       Toujours ouvert : sans extrait annoté, on ne sait pas si les pertes

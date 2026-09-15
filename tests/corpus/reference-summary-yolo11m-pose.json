@@ -76,7 +76,6 @@
     "exit_apply_ms": {
       "median": 0.0,
       "p90": 0.0
-    },
-    "ease_deferred_frames": 135
+    }
   }
 }

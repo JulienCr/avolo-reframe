@@ -41,12 +41,14 @@ l'issue #2 (nouveaux défauts de split, règle `crane_coupe` corrigée) par
 `--from-trace` — détail des deux prochaines sections.
 
 Nouveau : **`crane_coupe`**, la mesure qui aurait attrapé le défaut de coupe de
-tête du 12-13 septembre — sur le cadre **appliqué**, pas la cible calculée, qui
-peut en diverger pendant des dizaines d'images tant que la zone morte ne
-recommet pas. 10 025 cellules vérifiées, **1 coupée** (0,01 %), marge médiane
-+80 px, p10 +30 px ; 1 075 cas exclus où le crâne estimé tombe lui-même hors de
-la source (seule exception acceptée, comptée à part, jamais dans le taux de
-coupe).
+tête du 12-13 septembre — sur le cadre **commandé par la politique**
+(la destination de la transition, pas la cible calculée qui peut en diverger
+pendant des dizaines d'images tant que la zone morte ne recommet pas, ni le
+rectangle interpolé qu'OBS affiche pendant la transition elle-même, jamais
+modélisé ici — voir l'issue #9). 10 025 cellules vérifiées, **1 coupée**
+(0,01 %), marge médiane +80 px, p10 +30 px ; 1 075 cas exclus où le crâne
+estimé tombe lui-même hors de la source (seule exception acceptée, comptée à
+part, jamais dans le taux de coupe).
 
 ## Rejouer une trace : `--from-trace`
 
@@ -59,11 +61,13 @@ Forme `make` équivalente : `make replay TRACE=tests/corpus/traces/full-yolo11m-
 
 `scripts.corpus` rejoue les boîtes déjà détectées d'une trace JSONL au lieu de
 décoder le clip et de faire tourner le détecteur : quelques secondes au lieu de
-75 s, ce qui rend un balayage de paramètres praticable. **Un rejeu reproduit sa
-trace d'origine au bit près** (`cmp` sur le JSONL et sur le résumé) — c'est ce
-qui rend le réglage mesurable : changer un seul paramètre de politique et
-attribuer toute différence à ce paramètre, sans que le détecteur ou le décodage
-n'y soient pour rien.
+75 s, ce qui rend un balayage de paramètres praticable. **Rejoué avec les mêmes
+paramètres, un rejeu reproduit au bit près le run qui a produit la trace**
+(`cmp` sur le JSONL et sur le résumé) — c'est ce qui rend le réglage mesurable :
+changer un seul paramètre de politique et attribuer toute différence à ce
+paramètre, sans que le détecteur ou le décodage n'y soient pour rien. Distinct
+de l'autre garantie de bit-à-bit, plus bas dans `traces/` : deux **détections**
+complètes du même clip donnent la même trace, mesuré côté Vision.
 
 `--from-trace` et `<clip>` sont exclusifs ; tous les paramètres de politique
 exposés par `scripts.corpus --help` s'appliquent aussi bien à un rejeu qu'à une
@@ -104,16 +108,14 @@ commande parte (zone morte, verrou d'animation).
 - `exit_apply_ms` : délai entre le changement d'état et la commande qui
   l'applique — diagnostic, à 0 depuis que `mode_cut_pending` coupe la sortie
   sur l'image même où l'état bascule.
-- `ease_deferred_frames` : images où une décision de mode attendait la fin
-  d'une transition en cours ; depuis le 15 septembre 2026 seule la continuation
-  d'un mode attend le verrou, une bascule de mode le traverse toujours.
 
 ## La règle `crane_coupe`, corrigée le 15 septembre 2026
 
 `crane_coupe` vérifie chaque tête détectée contre la ou les cellules
-**appliquées** dont l'empan horizontal la contient, en gardant la meilleure
-marge (mode single : contre le crop appliqué qui couvre la tête). Les
-cellules chevauchent souvent en x ; l'ancienne règle appariait `state.tracks`
+**commandées** (destination de la transition, cf. plus haut) dont l'empan
+horizontal la contient, en gardant la meilleure marge (mode single : contre le
+crop commandé qui couvre la tête). Les cellules chevauchent souvent en x ;
+l'ancienne règle appariait `state.tracks`
 aux cellules par ordre de centre x et sautait les pistes non rafraîchies sur
 l'image, si bien qu'une tête montrée en entier dans la cellule du haut pouvait
 être jugée contre la cellule du bas d'un partenaire mémorisé.
@@ -158,15 +160,18 @@ d'une médiane de décrochage YOLO de 250-333 ms.
 Une dernière boîte touchant un bord du cadre prédit-elle qu'un sujet perdu est
 sorti de champ plutôt que raté par le détecteur ? Suivi par plus-proche-voisin,
 délibérément indépendant de `core/policy.py` (gate à 15 % de la largeur) :
-1 531 pertes, dont 379 avec la dernière boîte à moins de 3 % d'un bord latéral.
+1 531 pertes (5 censurées par la fin de trace, exclues des pourcentages
+ci-dessous), dont 379 avec la dernière boîte à moins de 3 % d'un bord latéral
+(3 censurées).
 
-Les pertes en bord de cadre reviennent **plus** souvent que celles à mi-cadre
-(jamais revenues sous 10 s : 7,4 % contre 9,2 % ; revenues sous 1 s : 77,3 %) ;
-la vitesse vers le bord ne sépare pas non plus les deux catégories. **Aucun
-maintien plus court n'est justifié pour une sortie en bord de cadre.** Résultat
-négatif conservé volontairement, dans l'esprit de `zoom-before/after.jsonl` —
-sans extrait annoté, « jamais revenu » mélange de vraies sorties de champ et de
-longs décrochages.
+Les pertes en bord de cadre reviennent **plus** souvent que celles à mi-cadre :
+jamais revenues sous 10 s, 6,6 % en bord contre 9,0 % à mi-cadre ; revenues
+sous 1 s, 77,9 % en bord contre 74,0 % à mi-cadre. La vitesse vers le bord ne
+sépare pas non plus les deux catégories. **Aucun maintien plus court n'est
+justifié pour une sortie en bord de cadre.** Résultat négatif conservé
+volontairement, dans l'esprit de `zoom-before/after.jsonl` — sans extrait
+annoté, « jamais revenu » mélange de vraies sorties de champ et de longs
+décrochages.
 
 ## `traces/`
 
@@ -175,9 +180,11 @@ longs décrochages.
 - `full-reference-pose.jsonl` — même extrait, **détecteur `pose`**, sha256
   `2b0520667503dcab` : c'est celui qui a produit `reference-summary.json`.
 - `full-yolo11m-pose-v2.jsonl` — même extrait, **détecteur YOLO11-pose `.pt`**
-  sur la machine de production, sha256 `b172c72d8b9c9e33`, format enrichi
-  (`anchor`, `crown`, `crown_margin`, `bust`) : c'est celui rejoué par
-  `--from-trace` pour produire `reference-summary-yolo11m-pose.json`.
+  sur la machine de production, empreinte du **clip** source `b172c72d8b9c9e33`
+  (champ `clip_sha256_16` de l'en-tête, pas un hachage du fichier de trace
+  lui-même), format enrichi (`anchor`, `crown`, `crown_margin`, `bust`) :
+  c'est celui rejoué par `--from-trace` pour produire
+  `reference-summary-yolo11m-pose.json`.
 - `zoom-before.jsonl` / `zoom-after.jsonl` — avant et après l'introduction de
   `zoom_dead_zone` : 153 commandes contre 149, soit **−2,6 % seulement**. Résultat
   négatif conservé exprès : il dit que le pumping mesuré sur cet extrait vient de
@@ -195,9 +202,12 @@ Forme `uv run` équivalente, sur une seule ligne :
 uv run python -m scripts.corpus tests/fixtures/lab-avolo-58m22-70m00.mp4 --detector pose --fps 12 --out trace.jsonl --summary-json summary.json
 ```
 
-75 s pour 698 s de vidéo, et **deux rejeux donnent une sortie identique au bit
-près**. C'est ce déterminisme qui rend le réglage mesurable : on change un seul
-paramètre et on attribue la différence à ce paramètre.
+75 s pour 698 s de vidéo, et **deux détections complètes du même clip donnent
+une trace identique au bit près** (mesuré côté Vision) — à ne pas confondre
+avec le bit-à-bit du `--from-trace` plus haut, qui porte sur le rejeu d'une
+trace déjà produite, pas sur la détection elle-même. C'est ce déterminisme qui
+rend le réglage mesurable : on change un seul paramètre et on attribue la
+différence à ce paramètre.
 
 > **Mais l'extrait `.mp4` n'est pas versionné.** Sans lui, rien n'est
 > régénérable et ces traces sont le seul témoignage durable des mesures. À garder

@@ -1,7 +1,7 @@
-"""Mesure : une derniere boite touchant un bord du cadre predit-elle qu'un
-sujet perdu est sorti (plutot que rate par le detecteur) ? Suivi greedy
-delibrement independant de core/policy.py (dont les deux slots se
-rematchent a n'importe quelle boite) ; lit tests/corpus/traces/*.jsonl.
+"""Measure: does a last box touching a frame edge predict that a lost
+subject actually left frame (rather than being missed by the detector)?
+Greedy tracking deliberately independent of core/policy.py (whose two
+slots rematch to any box); reads tests/corpus/traces/*.jsonl.
 """
 
 import json
@@ -131,12 +131,14 @@ def run_association(frames, width, gate_frac):
 
     for tid, tr in tracks.items():
         if tr.gap_start_pts is not None:
-            loss_events.append(_finalize_event(tr, width, None))
+            # The trace ends before MAX_GAP_MS elapses: right-censored, not
+            # a confirmed "never returned" -- reported apart, in main().
+            loss_events.append(_finalize_event(tr, width, None, censored=True))
 
     return loss_events
 
 
-def _finalize_event(track, width, gap_ms):
+def _finalize_event(track, width, gap_ms, censored=False):
     box = track.gap_last_box
     return {
         "box": box,
@@ -144,12 +146,14 @@ def _finalize_event(track, width, gap_ms):
         "score": box["score"],
         "height": box["h"],
         "gap_ms": gap_ms,
+        "censored": censored,
     }
 
 
 def share_returned_within(events, ms):
-    returned = [e for e in events if e["gap_ms"] is not None and e["gap_ms"] <= ms]
-    return len(returned), (100.0 * len(returned) / len(events)) if events else 0.0
+    counted = [e for e in events if not e["censored"]]
+    returned = [e for e in counted if e["gap_ms"] is not None and e["gap_ms"] <= ms]
+    return len(returned), (100.0 * len(returned) / len(counted)) if counted else 0.0
 
 
 def median_p90(values):
@@ -162,14 +166,16 @@ def print_category_table(title, categories, width):
     print(f"\n=== {title} ===")
     for name, events in categories:
         n = len(events)
-        never = sum(1 for e in events if e["gap_ms"] is None)
-        print(f"\n-- {name} : {n} pertes --")
-        if n == 0:
+        censored = sum(1 for e in events if e["censored"])
+        counted = n - censored
+        never = sum(1 for e in events if e["gap_ms"] is None and not e["censored"])
+        print(f"\n-- {name} : {n} pertes ({censored} censurées, fin de trace) --")
+        if counted == 0:
             continue
         for ms in RETURN_BUCKETS_MS:
             count, pct = share_returned_within(events, ms)
             print(f"  retour <= {ms:>5} ms : {count:4d} ({pct:5.1f}%)")
-        print(f"  jamais revenu (<= {int(MAX_GAP_MS)} ms) : {never:4d} ({100.0 * never / n:5.1f}%)")
+        print(f"  jamais revenu (<= {int(MAX_GAP_MS)} ms) : {never:4d} ({100.0 * never / counted:5.1f}%)")
         returned_gaps = [e["gap_ms"] for e in events if e["gap_ms"] is not None]
         med, p90 = median_p90(returned_gaps)
         if med is not None:
@@ -188,16 +194,22 @@ def main():
     print("\n=== Sensibilité au gate d'association ===")
     for gate_frac in GATE_FRACS:
         events = run_association(frames, width, gate_frac)
-        never = sum(1 for e in events if e["gap_ms"] is None)
+        never = sum(1 for e in events if e["gap_ms"] is None and not e["censored"])
+        censored = sum(1 for e in events if e["censored"])
         edge_events = [e for e in events if touches_side_edge(e["box"], width, PRIMARY_EDGE_FRAC)]
         tag = " (primaire)" if gate_frac == PRIMARY_GATE_FRAC else ""
         print(
             f"  gate {gate_frac * 100:4.0f}% largeur{tag} : {len(events):4d} pertes, "
-            f"{never:4d} jamais revenues, {len(edge_events):4d} en bord de côté (E={PRIMARY_EDGE_FRAC * 100:.0f}%)"
+            f"{never:4d} jamais revenues, {censored:4d} censurées, "
+            f"{len(edge_events):4d} en bord de côté (E={PRIMARY_EDGE_FRAC * 100:.0f}%)"
         )
 
     events = run_association(frames, width, PRIMARY_GATE_FRAC)
-    print(f"\ngate retenu pour la suite : {PRIMARY_GATE_FRAC * 100:.0f}% largeur, {len(events)} pertes au total")
+    n_censored = sum(1 for e in events if e["censored"])
+    print(
+        f"\ngate retenu pour la suite : {PRIMARY_GATE_FRAC * 100:.0f}% largeur, {len(events)} pertes au total "
+        f"({n_censored} censurées, fin de trace)"
+    )
 
     for e_frac in EDGE_FRACS:
         mid = [e for e in events if not touches_side_edge(e["box"], width, e_frac)]

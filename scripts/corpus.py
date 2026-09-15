@@ -13,6 +13,7 @@ import json
 import math
 import statistics
 import sys
+from pathlib import Path
 from typing import Iterator
 
 from adapters.detector import build_detector, to_source_rect
@@ -69,6 +70,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if (args.clip is None) == (args.from_trace is None):
         parser.error("indiquez soit <clip>, soit --from-trace, jamais les deux ni aucun des deux.")
+    if args.from_trace is not None and Path(args.out).resolve() == Path(args.from_trace).resolve():
+        parser.error("--out ne peut pas être la trace lue par --from-trace : cela l'écraserait avant qu'elle ne soit rejouée.")
     return args
 
 
@@ -218,7 +221,6 @@ def _new_split_metrics() -> dict:
         "switches": 0, "entries": 0, "stale_entries": 0, "short_splits": 0,
         "split_ms_total": 0.0, "entry_ms": [], "entry_episode_ms": [], "exit_ms": [],
         "exit_causes": {"track_died": 0, "not_ready": 0}, "phantom_exits": 0, "exit_apply_ms": [],
-        "ease_deferred_frames": 0,
     }
 
 
@@ -241,7 +243,6 @@ def split_summary(m: dict, duration_ms: float) -> dict:
             "median": round(percentile(m["exit_apply_ms"], 0.5), 1),
             "p90": round(percentile(m["exit_apply_ms"], 0.9), 1),
         },
-        "ease_deferred_frames": m["ease_deferred_frames"],
     }
 
 
@@ -341,7 +342,6 @@ def print_summary(
             f"  délai état → commande appliquée pour une sortie (diagnostic) : "
             f"médiane {split['exit_apply_ms']['median']:.0f} ms, p90 {split['exit_apply_ms']['p90']:.0f} ms"
         )
-        print(f"  décisions différées par le lissage (ease) : {split['ease_deferred_frames']}")
     else:
         print("Split : n/a (aucune bascule).")
 
@@ -437,14 +437,7 @@ def run_loop(
                 episode_since = None
 
         prev_state = state
-        deferred = (
-            prev_state.busy_until_ms is not None
-            and pts_ms < prev_state.busy_until_ms
-            and (prev_state.mode == "split") != fresh
-        )
         state, cmd = step(state, rects, pts_ms, p)
-        if deferred:
-            split["ease_deferred_frames"] += 1
 
         if cmd is not None:
             move_px = math.hypot(cmd.target.cx - prev_state.current.cx, cmd.target.cy - prev_state.current.cy)
@@ -527,9 +520,9 @@ def run_loop(
         last_pts_ms = pts_ms
 
     if split_start_ms is not None:
-        duration = last_pts_ms - split_start_ms
-        split["split_ms_total"] += duration
-        split["short_splits"] += 1 if duration < 1500.0 else 0
+        # Right-censored: this split never exits within the trace, so its
+        # true duration is unknown and it cannot count as short.
+        split["split_ms_total"] += last_pts_ms - split_start_ms
 
     return n_frames, n_detections, moves, degeneracy, head, split_summary(split, last_pts_ms)
 
@@ -576,7 +569,15 @@ def main() -> None:
     )
 
     if args.from_trace is not None:
-        header = {**trace_header, "params": {name: getattr(p, name) for name in p.__dataclass_fields__}}
+        replay_params = {name: getattr(p, name) for name in p.__dataclass_fields__}
+        diffs = [
+            f"{name} {trace_header['params'].get(name)} → {replay_params[name]}"
+            for name in p.__dataclass_fields__
+            if trace_header["params"].get(name) != replay_params[name]
+        ]
+        if diffs:
+            print("Attention : paramètres différents de ceux de la trace : " + ", ".join(diffs))
+        header = {**trace_header, "params": replay_params}
     else:
         header = {
             "clip_sha256_16": sha256_16(args.clip),
