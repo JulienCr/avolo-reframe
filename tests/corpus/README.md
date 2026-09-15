@@ -83,9 +83,11 @@ sans commit de crâne pendant les verrous d'animation.
 
 ## La section `split` du résumé
 
-Mesure les bascules split ↔ simple sur la couche qu'OBS montre réellement — les
-**commandes émises**, pas l'état interne calculé, qui peut changer sans qu'une
-commande parte (zone morte, verrou d'animation).
+Mesure les bascules split ↔ simple sur les **commandes émises** par la politique,
+pas sur l'état interne calculé, qui peut changer sans qu'une commande parte (zone
+morte, verrou d'animation). Ce n'est pas encore ce qu'OBS affiche : une commande
+peut être animée ou remplacée avant d'être appliquée, et seule la relecture de
+`cropTop` depuis un autre processus prouve l'état affiché.
 
 - `switches` : nombre de commandes qui changent de mode.
 - `entries` / `stale_entries` : entrées en split, et combien d'entre elles

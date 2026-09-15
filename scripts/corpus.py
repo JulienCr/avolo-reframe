@@ -70,8 +70,11 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if (args.clip is None) == (args.from_trace is None):
         parser.error("indiquez soit <clip>, soit --from-trace, jamais les deux ni aucun des deux.")
-    if args.from_trace is not None and Path(args.out).resolve() == Path(args.from_trace).resolve():
-        parser.error("--out ne peut pas être la trace lue par --from-trace : cela l'écraserait avant qu'elle ne soit rejouée.")
+    if args.from_trace is not None:
+        source = Path(args.from_trace).resolve()
+        for flag, path in (("--out", args.out), ("--summary-json", args.summary_json)):
+            if path is not None and Path(path).resolve() == source:
+                parser.error(f"{flag} ne peut pas être la trace lue par --from-trace : cela l'écraserait.")
     return args
 
 
@@ -308,7 +311,7 @@ def print_summary(
     n_checked = head["n_checked"]
     if n_checked:
         cut_rate = 100.0 * head["n_cut"] / n_checked
-        print(f"Crâne coupé (cadre appliqué) : {cut_rate:.1f}% ({head['n_cut']}/{n_checked}).")
+        print(f"Crâne coupé (cadre commandé) : {cut_rate:.1f}% ({head['n_cut']}/{n_checked}).")
         margins = head["margins"]
         print(f"  marge crâne/bord haut : médiane {percentile(margins, 0.5):.0f}px, p10 {percentile(margins, 0.1):.0f}px")
         print(f"  dont crâne hors source (cas accepté, exclu ci-dessus) : {head['n_unreachable']}")
@@ -317,7 +320,7 @@ def print_summary(
 
     if split["switches"]:
         print(
-            f"Split (bascules réellement appliquées à OBS) : {split['switches']} bascules, "
+            f"Split (bascules commandées, commandes émises) : {split['switches']} bascules, "
             f"{split['entries']} entrées ({split['stale_entries']} périmées), {split['short_splits']} splits < 1,5 s."
         )
         print(f"  part du temps en split : {100 * split['split_time_share']:.1f}%")
