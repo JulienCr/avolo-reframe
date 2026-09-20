@@ -5,6 +5,7 @@ Run as: uv run python -m scripts.run
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import math
 import sys
@@ -16,10 +17,11 @@ from adapters.animator import Animator, ApplyFn
 from adapters.control import ControlState, start_server
 from adapters.detector import build_detector, to_source_rect
 from adapters.frames import FrameSource
-from adapters.obsws import ObsWs, ObsWsError
+from adapters.obsws import ObsWs, ObsWsError, SceneRef
 from core.geometry import Rect, clamp_to_source, expand, fit_ratio, to_crop, union
 from core.policy import Command, PolicyParams, PolicyState, REFERENCE_SOURCE_H, height_floor, initial_state, step
 from scripts.layout import AVOCAM_KIND, AVOCAM_PLACEHOLDER_SIZE, CAM_NAME, CONTROL_W, OUTPUT_H, OUTPUT_W, RATIO, SCENE_NAME
+from scripts.layout_lsa import CAMERAS, CELL_H, VERTICAL_H, VERTICAL_SCENE_UUID, VERTICAL_W
 
 # Shared with setup_scene.py's --control-port default, so the loop and the
 # overlay Browser Source URL it bakes in can never drift apart.
@@ -35,10 +37,35 @@ SCENE_RESOLUTION_TIMEOUT_S = 3.0
 SCENE_RESOLUTION_POLL_S = 0.1
 # Measured in the OBS log on a rebuild: receiver started, first 4K frame 0.87s later.
 AVOCAM_FIRST_FRAME_TIMEOUT_S = 5.0
+# A live camera's sensor noise never reproduces the same JPEG twice; past this
+# many identical frames in a row the source is almost certainly not rendering.
+FROZEN_SOURCE_THRESHOLD = 30
 
 
 class SceneNotReady(Exception):
     """Scene items missing, incomplete, or mid-rebuild; message is the French line to print."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Topology:
+    """Where one loop instance reads its image and writes its crops.
+
+    Resolved once at startup and replaced (dataclasses.replace, never
+    mutated) whenever a rebuild changes an id or the discovered source_uuid.
+    The PoC and each LSA camera are two shapes of the same fields: control_w
+    is None outside the PoC (no control item to size from); image_source_uuid
+    is None for the PoC (RF Cam's uuid isn't known ahead of a rebuild, and is
+    rediscovered by name on every resolve).
+    """
+
+    name: str
+    ref: SceneRef
+    image_source_name: str
+    image_source_uuid: str | None
+    source_uuid: str | None
+    full_bounds: tuple[float, float]
+    cell_bounds: tuple[float, float]
+    control_w: float | None
 
 
 DEFAULT_CONFIG_PATH = Path("reframe.toml")
@@ -46,9 +73,8 @@ DEFAULT_CONFIG_PATH = Path("reframe.toml")
 _NULLABLE_STRING_KEYS = {"password", "log", "media_file", "avocam_ip"}
 
 # section -> {toml key: (argparse dest, expected type(s))}. A key's dest can
-# differ from its TOML spelling (split_enabled -> dest "split", matching the
-# --split/--no-split flag) so run.py and setup_scene.py share one format
-# while each only applies the dests its own parser declares.
+# differ from its TOML spelling (split_enabled -> dest "split"), so run.py
+# and setup_scene.py share one format while each applies its own dests.
 CONFIG_SCHEMA: dict[str, dict[str, tuple[str, type | tuple[type, ...]]]] = {
     "connection": {
         "url": ("url", str),
@@ -168,6 +194,7 @@ def parse_args() -> argparse.Namespace:
 
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--config", type=Path, default=None)
+    pre.add_argument("--control-port", type=int, default=None)
     pre_args, _ = pre.parse_known_args()
 
     parser = argparse.ArgumentParser(description="Boucle de recadrage en direct pour AVOLO Reframe.")
@@ -177,6 +204,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--url", default="ws://127.0.0.1:4455")
     parser.add_argument("--password", default=None)
     parser.add_argument("--scene", default=SCENE_NAME)
+    parser.add_argument(
+        "--scene-uuid", default=None,
+        help="Adresse la scène par sceneUuid plutôt que par nom ; prioritaire sur --scene si les deux sont donnés.",
+    )
+    parser.add_argument(
+        "--cam", dest="cam", choices=tuple(CAMERAS), default=None,
+        help="Instance LSA : topologie et control_port depuis scripts.layout_lsa.CAMERAS "
+        "(sauf --control-port passé explicitement).",
+    )
     parser.add_argument(
         "--detector", choices=("pose", "vision", "yolo"), default="pose" if sys.platform == "darwin" else "yolo"
     )
@@ -220,6 +256,13 @@ def parse_args() -> argparse.Namespace:
         "--control-port", type=int, default=DEFAULT_CONTROL_PORT, help="Port du dock de contrôle (0 pour désactiver)."
     )
     parser.add_argument(
+        "--live",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Écrit crops et visibilités sur OBS ; --no-live continue de capturer/détecter/publier "
+        "l'overlay sans rien écrire (plusieurs instances peuvent alors partager les mêmes items en sécurité).",
+    )
+    parser.add_argument(
         "--features",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -230,69 +273,94 @@ def parse_args() -> argparse.Namespace:
     config_path = pre_args.config or DEFAULT_CONFIG_PATH
     status = apply_config(parser, config_path, explicit=pre_args.config is not None, dests=RUN_CONFIG_DESTS)
     args = parser.parse_args()
+    if args.cam and pre_args.control_port is None:
+        args.control_port = CAMERAS[args.cam].control_port
     print(status)
     return args
 
 
-def find_scene_items(obs: ObsWs, scene: str) -> tuple[int, int, int, int, str]:
-    """Return (control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid).
-
-    Distinguished by bounds only, never by creation order: boundsWidth
-    separates control from the three OUTPUT_W items, boundsHeight then
-    separates the single output (OUTPUT_H) from the two cells (half that),
-    and positionY separates the top cell from the bottom one. cam_uuid is
-    the sourceUuid shared by all four CAM_NAME items: a rebuild recreates
-    the RF Cam input under the same name but a fresh uuid, which is what
-    lets a caller tell a live scene from a rebuilt one with reused ids.
+def discover_source_uuid(items: list[dict], source_name: str) -> str:
+    """PoC bootstrap: RF Cam's uuid changes on every rebuild and isn't known
+    ahead of time, so it is (re)learned each call from items sharing its name.
     """
-    items = obs.request("GetSceneItemList", {"sceneName": scene})["sceneItems"]
-    cam_items = [i for i in items if i["sourceName"] == CAM_NAME]
-
-    if len(cam_items) != 4:
+    uuids = {i["sourceUuid"] for i in items if i["sourceName"] == source_name}
+    if len(uuids) != 1:
         raise SceneNotReady(
-            f"Scène « {scene} » incomplète (attendu 4 items {CAM_NAME}, trouvé {len(cam_items)}). "
-            "Lancez d'abord setup_scene --force."
+            f"Source « {source_name} » : {len(uuids)} uuid(s) trouvé(s) au lieu de 1 (reconstruction en cours ?)."
         )
+    return uuids.pop()
 
-    cam_uuids = {i["sourceUuid"] for i in cam_items}
-    if len(cam_uuids) != 1:
+
+def select_camera_items(
+    items: list[dict], transforms: dict[int, dict], topo: Topology
+) -> tuple[int | None, int, int, int]:
+    """Pick one camera's item ids out of a (possibly multi-camera) scene.
+
+    Returns (control_id or None, full_id, cell_top_id, cell_bottom_id).
+    Filters by sourceUuid only, never sourceName: a "--- CAM X" scene name is
+    list-ordering decoration, free to be renamed, while sourceUuid is not.
+    Then by bounds signature; cells are ordered by positionY, smallest first.
+    """
+    cam_ids = [i["sceneItemId"] for i in items if i.get("sourceUuid") == topo.source_uuid]
+
+    def bounds(item_id: int) -> tuple[float, float]:
+        t = transforms[item_id]
+        return t["boundsWidth"], t["boundsHeight"]
+
+    control_ids = [i for i in cam_ids if topo.control_w is not None and bounds(i)[0] == topo.control_w]
+    full_ids = [i for i in cam_ids if bounds(i) == topo.full_bounds]
+    cell_ids = [i for i in cam_ids if bounds(i) == topo.cell_bounds]
+
+    control_ok = len(control_ids) == 1 if topo.control_w is not None else len(control_ids) == 0
+    if not control_ok or len(full_ids) != 1 or len(cell_ids) != 2:
         raise SceneNotReady(
-            f"Scène « {scene} » : les items {CAM_NAME} référencent des sources différentes "
-            "(reconstruction en cours ?)"
-        )
-    cam_uuid = cam_uuids.pop()
-
-    cam_ids = [i["sceneItemId"] for i in cam_items]
-    transforms = {
-        cam_id: obs.request("GetSceneItemTransform", {"sceneName": scene, "sceneItemId": cam_id})[
-            "sceneItemTransform"
-        ]
-        for cam_id in cam_ids
-    }
-    control_ids = [i for i, t in transforms.items() if t["boundsWidth"] == CONTROL_W]
-    output_ids = [i for i, t in transforms.items() if t["boundsWidth"] == OUTPUT_W and t["boundsHeight"] == OUTPUT_H]
-    cell_ids = [i for i, t in transforms.items() if t["boundsWidth"] == OUTPUT_W and t["boundsHeight"] == OUTPUT_H / 2]
-
-    if len(control_ids) != 1 or len(output_ids) != 1 or len(cell_ids) != 2:
-        raise SceneNotReady(
-            f"Impossible d'identifier les items {CAM_NAME} par leurs bounds "
-            f"(contrôle={len(control_ids)} sortie={len(output_ids)} cellules={len(cell_ids)}). "
-            "Relancez setup_scene --force."
+            f"Caméra « {topo.name} » incomplète (contrôle={len(control_ids)} plein={len(full_ids)} "
+            f"cellules={len(cell_ids)}). Relancez setup_scene/setup_lsa --force."
         )
 
     cell_top_id, cell_bottom_id = sorted(cell_ids, key=lambda i: transforms[i]["positionY"])
-    return control_ids[0], output_ids[0], cell_top_id, cell_bottom_id, cam_uuid
+    control_id = control_ids[0] if control_ids else None
+    return control_id, full_ids[0], cell_top_id, cell_bottom_id
 
 
-def source_size(obs: ObsWs, scene: str, control_id: int) -> tuple[int, int]:
-    transform = obs.request("GetSceneItemTransform", {"sceneName": scene, "sceneItemId": control_id})[
-        "sceneItemTransform"
-    ]
+def find_scene_items(obs: ObsWs, topo: Topology) -> tuple[Topology, int | None, int, int, int]:
+    """Resolve topo.source_uuid (rediscovered by name when not known ahead of
+    time) then pick this camera's item ids.
+
+    Returns (topo, control_id or None, full_id, cell_top_id, cell_bottom_id);
+    the returned topo carries the resolved source_uuid.
+    """
+    items = obs.request("GetSceneItemList", topo.ref)["sceneItems"]
+    source_uuid = topo.image_source_uuid or discover_source_uuid(items, topo.image_source_name)
+    topo = dataclasses.replace(topo, source_uuid=source_uuid)
+    transforms = {
+        i["sceneItemId"]: obs.request("GetSceneItemTransform", {**topo.ref, "sceneItemId": i["sceneItemId"]})[
+            "sceneItemTransform"
+        ]
+        for i in items
+        if i.get("sourceUuid") == source_uuid
+    }
+    control_id, full_id, cell_top_id, cell_bottom_id = select_camera_items(items, transforms, topo)
+    return topo, control_id, full_id, cell_top_id, cell_bottom_id
+
+
+def source_size(obs: ObsWs, ref: SceneRef, item_id: int) -> tuple[int, int]:
+    transform = obs.request("GetSceneItemTransform", {**ref, "sceneItemId": item_id})["sceneItemTransform"]
     return transform["sourceWidth"], transform["sourceHeight"]
 
 
+def try_input_kind(obs: ObsWs, input_name: str) -> str | None:
+    """None when input_name addresses a scene, not an input: GetInputSettings
+    then fails with code 602, which the AvoCam-placeholder check simply skips.
+    """
+    try:
+        return obs.request("GetInputSettings", {"inputName": input_name})["inputKind"]
+    except ObsWsError:
+        return None
+
+
 def should_wait_for_first_frame(
-    kind: str, reported_size: tuple[int, int], current_size: tuple[int, int] | None
+    kind: str | None, reported_size: tuple[int, int], current_size: tuple[int, int] | None
 ) -> bool:
     """Pure: True when a rebuilt AvoCam input reports the plugin's placeholder
     size while the loop still holds a real (non-placeholder) size.
@@ -306,61 +374,61 @@ def should_wait_for_first_frame(
 
 
 def resolve_scene(
-    obs: ObsWs, scene: str, current_size: tuple[int, int] | None = None
-) -> tuple[int, int, int, int, int, int, str]:
-    """(control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h, cam_uuid).
+    obs: ObsWs, topo: Topology, current_size: tuple[int, int] | None = None
+) -> tuple[Topology, int | None, int, int, int, int, int]:
+    """(topo, control_id or None, full_id, cell_top_id, cell_bottom_id, source_w, source_h).
 
     A scene rebuilt moments ago may not have renegotiated a resolution yet:
     poll briefly rather than handing back 0x0, which a caller later divides by.
     """
-    control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid = find_scene_items(obs, scene)
+    topo, control_id, full_id, cell_top_id, cell_bottom_id = find_scene_items(obs, topo)
+    size_id = control_id if control_id is not None else full_id
     deadline = time.perf_counter() + SCENE_RESOLUTION_TIMEOUT_S
-    source_w, source_h = source_size(obs, scene, control_id)
+    source_w, source_h = source_size(obs, topo.ref, size_id)
     while (not source_w or not source_h) and time.perf_counter() < deadline:
         time.sleep(SCENE_RESOLUTION_POLL_S)
-        source_w, source_h = source_size(obs, scene, control_id)
+        source_w, source_h = source_size(obs, topo.ref, size_id)
     if not source_w or not source_h:
-        raise SceneNotReady(f"Scène « {scene} » : résolution pas encore négociée après reconstruction")
+        raise SceneNotReady(f"Caméra « {topo.name} » : résolution pas encore négociée après reconstruction")
 
-    cam_kind = obs.request("GetInputSettings", {"inputName": CAM_NAME})["inputKind"]
+    cam_kind = try_input_kind(obs, topo.image_source_name)
     if should_wait_for_first_frame(cam_kind, (int(source_w), int(source_h)), current_size):
         frame_deadline = time.perf_counter() + AVOCAM_FIRST_FRAME_TIMEOUT_S
         while (int(source_w), int(source_h)) == AVOCAM_PLACEHOLDER_SIZE and time.perf_counter() < frame_deadline:
             time.sleep(SCENE_RESOLUTION_POLL_S)
-            source_w, source_h = source_size(obs, scene, control_id)
+            source_w, source_h = source_size(obs, topo.ref, size_id)
 
-    return control_id, output_id, cell_top_id, cell_bottom_id, source_w, source_h, cam_uuid
+    return topo, control_id, full_id, cell_top_id, cell_bottom_id, source_w, source_h
 
 
-def cam_items_match(items: list[dict], ids: tuple[int, int, int, int], cam_uuid: str) -> bool:
-    """Pure: True when every id in ids names a CAM_NAME item carrying cam_uuid, in a
+def cam_items_match(items: list[dict], ids: tuple[int, ...], source_uuid: str) -> bool:
+    """Pure: True when every id in ids names an item carrying source_uuid, in a
     GetSceneItemList-shaped list.
 
-    A rebuild can reuse the same numeric ids and the same source name for a
-    fresh input: sourceUuid is what actually changes, which name/id alone hide.
+    A rebuild can reuse the same numeric ids: sourceUuid is what actually
+    changes, which id alone hides. Never checks sourceName -- a camera scene
+    like "--- CAM Main" can be renamed without notice, unlike its uuid.
     """
     by_id = {i["sceneItemId"]: i for i in items}
     return all(
-        (item := by_id.get(item_id)) is not None
-        and item["sourceName"] == CAM_NAME
-        and item.get("sourceUuid") == cam_uuid
+        (item := by_id.get(item_id)) is not None and item.get("sourceUuid") == source_uuid
         for item_id in ids
     )
 
 
-def scene_items_match(obs: ObsWs, scene: str, ids: tuple[int, int, int, int], cam_uuid: str) -> bool:
-    items = obs.request("GetSceneItemList", {"sceneName": scene})["sceneItems"]
-    return cam_items_match(items, ids, cam_uuid)
+def scene_items_match(obs: ObsWs, ref: SceneRef, ids: tuple[int, ...], source_uuid: str) -> bool:
+    items = obs.request("GetSceneItemList", ref)["sceneItems"]
+    return cam_items_match(items, ids, source_uuid)
 
 
-def report_scene_retry(scene: str, exc: Exception, last_error: str | None, next_log_at: float) -> tuple[str, float]:
+def report_scene_retry(name: str, exc: Exception, last_error: str | None, next_log_at: float) -> tuple[str, float]:
     """Rate-limited "scene unavailable" line, shared by the periodic check and the
     reconnect handler: a stuck rebuild logs at most once per SCENE_CHECK_INTERVAL_S.
     """
     msg = str(exc)
     now = time.perf_counter()
     if msg != last_error or now >= next_log_at:
-        print(f"Scène « {scene} » indisponible ({msg}), nouvel essai.")
+        print(f"Caméra « {name} » indisponible ({msg}), nouvel essai.")
         next_log_at = now + SCENE_CHECK_INTERVAL_S
     return msg, next_log_at
 
@@ -370,16 +438,16 @@ def crop_patch(rect: Rect, source_w: int, source_h: int) -> dict:
     return {"cropLeft": left, "cropTop": top, "cropRight": right, "cropBottom": bottom}
 
 
-def enabled_patch(scene: str, item_id: int, enabled: bool) -> tuple[str, dict]:
-    return "SetSceneItemEnabled", {"sceneName": scene, "sceneItemId": item_id, "sceneItemEnabled": enabled}
+def enabled_patch(ref: SceneRef, item_id: int, enabled: bool) -> tuple[str, dict]:
+    return "SetSceneItemEnabled", {**ref, "sceneItemId": item_id, "sceneItemEnabled": enabled}
 
 
-def transform_patch(scene: str, item_id: int, transform: dict) -> tuple[str, dict]:
-    return "SetSceneItemTransform", {"sceneName": scene, "sceneItemId": item_id, "sceneItemTransform": transform}
+def transform_patch(ref: SceneRef, item_id: int, transform: dict) -> tuple[str, dict]:
+    return "SetSceneItemTransform", {**ref, "sceneItemId": item_id, "sceneItemTransform": transform}
 
 
 def make_single_apply_fn(
-    scene: str,
+    ref: SceneRef,
     output_id: int,
     cell_top_id: int,
     cell_bottom_id: int,
@@ -390,36 +458,36 @@ def make_single_apply_fn(
     def apply_fn(rects: tuple[Rect, ...]) -> list[tuple[str, dict]]:
         (rect,) = rects
         return [
-            enabled_patch(scene, output_id, True),
-            enabled_patch(scene, cell_top_id, False),
-            enabled_patch(scene, cell_bottom_id, False),
-            transform_patch(scene, output_id, crop_patch(rect, source_w, source_h)),
+            enabled_patch(ref, output_id, True),
+            enabled_patch(ref, cell_top_id, False),
+            enabled_patch(ref, cell_bottom_id, False),
+            transform_patch(ref, output_id, crop_patch(rect, source_w, source_h)),
         ]
     return apply_fn
 
 
 def make_split_apply_fn(
-    scene: str, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
+    ref: SceneRef, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
 ) -> ApplyFn:
     """Two rects drive the two cells; the single output hides."""
     def apply_fn(rects: tuple[Rect, ...]) -> list[tuple[str, dict]]:
         top, bottom = rects
         return [
-            enabled_patch(scene, output_id, False),
-            enabled_patch(scene, cell_top_id, True),
-            enabled_patch(scene, cell_bottom_id, True),
-            transform_patch(scene, cell_top_id, crop_patch(top, source_w, source_h)),
-            transform_patch(scene, cell_bottom_id, crop_patch(bottom, source_w, source_h)),
+            enabled_patch(ref, output_id, False),
+            enabled_patch(ref, cell_top_id, True),
+            enabled_patch(ref, cell_bottom_id, True),
+            transform_patch(ref, cell_top_id, crop_patch(top, source_w, source_h)),
+            transform_patch(ref, cell_bottom_id, crop_patch(bottom, source_w, source_h)),
         ]
     return apply_fn
 
 
 def build_apply_fns(
-    scene: str, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
+    ref: SceneRef, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
 ) -> tuple[ApplyFn, ApplyFn]:
     return (
-        make_single_apply_fn(scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
-        make_split_apply_fn(scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
+        make_single_apply_fn(ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
+        make_split_apply_fn(ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
     )
 
 
@@ -427,7 +495,7 @@ def apply_source_resize(
     p: PolicyParams,
     control: ControlState | None,
     animator: Animator,
-    scene: str,
+    ref: SceneRef,
     output_id: int,
     cell_top_id: int,
     cell_bottom_id: int,
@@ -443,7 +511,7 @@ def apply_source_resize(
     if control is not None:
         control.replace_source_size(new_source_w, new_source_h)
     single_apply_fn, split_apply_fn = build_apply_fns(
-        scene, output_id, cell_top_id, cell_bottom_id, new_source_w, new_source_h
+        ref, output_id, cell_top_id, cell_bottom_id, new_source_w, new_source_h
     )
     animator.jump((state.current,), single_apply_fn)
     return p, state, single_apply_fn, split_apply_fn
@@ -574,6 +642,35 @@ def print_summary(
         )
 
 
+def build_topology(args: argparse.Namespace) -> Topology:
+    """One Topology instance per run: LSA when --cam names a production
+    camera, otherwise the PoC scene (unchanged from before this feature).
+    """
+    if args.cam:
+        cam = CAMERAS[args.cam]
+        return Topology(
+            name=cam.key,
+            ref={"sceneUuid": VERTICAL_SCENE_UUID},
+            image_source_name=cam.scene_name,
+            image_source_uuid=cam.scene_uuid,
+            source_uuid=cam.scene_uuid,
+            full_bounds=(VERTICAL_W, VERTICAL_H),
+            cell_bounds=(VERTICAL_W, CELL_H),
+            control_w=None,
+        )
+    scene_ref: SceneRef = {"sceneUuid": args.scene_uuid} if args.scene_uuid else {"sceneName": args.scene}
+    return Topology(
+        name="poc",
+        ref=scene_ref,
+        image_source_name=CAM_NAME,
+        image_source_uuid=None,
+        source_uuid=None,
+        full_bounds=(OUTPUT_W, OUTPUT_H),
+        cell_bounds=(OUTPUT_W, OUTPUT_H / 2),
+        control_w=CONTROL_W,
+    )
+
+
 def main() -> None:
     args = parse_args()
     detector = build_detector(args.detector, args.upper_body, args.yolo_model)
@@ -581,22 +678,25 @@ def main() -> None:
         print(f"--features exige un détecteur qui expose detect_poses() ; « {detector.name} » ne l'expose pas.")
         sys.exit(1)
 
+    topo = build_topology(args)
+
     obs = ObsWs(url=args.url, password=args.password)
     try:
         obs.connect()
-        control_id, output_id, cell_top_id, cell_bottom_id, cam_uuid = find_scene_items(obs, args.scene)
-        source_w, source_h = source_size(obs, args.scene, control_id)
-        cam_kind = obs.request("GetInputSettings", {"inputName": CAM_NAME})["inputKind"]
+        topo, control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, topo)
+        size_id = control_id if control_id is not None else output_id
+        source_w, source_h = source_size(obs, topo.ref, size_id)
+        cam_kind = try_input_kind(obs, topo.image_source_name)
         if cam_kind == AVOCAM_KIND and (source_w, source_h) == AVOCAM_PLACEHOLDER_SIZE:
             print(
-                f"Attention : RF Cam annonce {source_w}x{source_h}, la taille du motif de test du plugin AvoCam -- "
-                "la boucle adoptera la vraie taille dès la première image reçue."
+                f"Attention : {topo.image_source_name} annonce {source_w}x{source_h}, la taille du motif de "
+                "test du plugin AvoCam -- la boucle adoptera la vraie taille dès la première image reçue."
             )
     except SceneNotReady as exc:
         print(str(exc))
         sys.exit(1)
     except ObsWsError as exc:
-        print(f"Scène « {args.scene} » introuvable ou invalide ({exc}). Lancez d'abord setup_scene.")
+        print(f"Caméra « {topo.name} » introuvable ou invalide ({exc}). Lancez d'abord setup_scene ou setup_lsa.")
         sys.exit(1)
 
     p = PolicyParams(
@@ -621,16 +721,19 @@ def main() -> None:
     state = initial_state(p)
 
     single_apply_fn, split_apply_fn = build_apply_fns(
-        args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+        topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
     )
 
     animator = Animator(url=args.url, password=args.password)
     animator.start()
-    animator.jump((state.current,), single_apply_fn)
+    live = args.live
+    if live:
+        animator.jump((state.current,), single_apply_fn)
 
     control = None
     if args.control_port:
         control = ControlState(params=p, detector_name=detector.name, fps=args.fps, upper_body=args.upper_body)
+        control.set_live(live)
         scripts_dir = Path(__file__).parent
         start_server(control, args.control_port, scripts_dir / "dock.html", scripts_dir / "overlay.html")
         print(f"Tableau de bord : http://127.0.0.1:{args.control_port}/")
@@ -651,7 +754,7 @@ def main() -> None:
         feature_extractor = FeatureExtractor()
     use_pose_features = args.features and feature_extractor is None
 
-    frames = FrameSource(obs, CAM_NAME, width=args.width)
+    frames = FrameSource(obs, topo.image_source_name, width=args.width, source_uuid=topo.image_source_uuid)
     log_file = open(args.log, "w", newline="\n") if args.log else None
 
     stats: dict[str, list[float]] = {"capture": [], "detect": [], "policy": [], "send": [], "features": []}
@@ -667,24 +770,28 @@ def main() -> None:
     last_scene_error: str | None = None
     next_scene_error_log = 0.0
     connection_lost_logged = False
+    live_prev = live
+    frame_fingerprint: bytes | None = None
+    frozen_streak = 0
+    frozen_logged = False
 
     try:
         while deadline is None or time.perf_counter() < deadline:
             try:
                 if time.perf_counter() >= next_scene_check:
-                    ids = (control_id, output_id, cell_top_id, cell_bottom_id)
-                    if not scene_items_match(obs, args.scene, ids, cam_uuid):
+                    ids = tuple(i for i in (control_id, output_id, cell_top_id, cell_bottom_id) if i is not None)
+                    if not scene_items_match(obs, topo.ref, ids, topo.source_uuid):
                         # A half-built rebuild (setup_scene creating items over some ms) must
                         # not kill the loop: retry locally, on the shared rate-limited line,
                         # rather than falling through to the "Connexion OBS perdue" handler.
                         try:
                             (
-                                control_id, output_id, cell_top_id, cell_bottom_id,
-                                new_source_w, new_source_h, cam_uuid,
-                            ) = resolve_scene(obs, args.scene, current_size=(source_w, source_h))
+                                topo, control_id, output_id, cell_top_id, cell_bottom_id,
+                                new_source_w, new_source_h,
+                            ) = resolve_scene(obs, topo, current_size=(source_w, source_h))
                         except (SceneNotReady, ObsWsError) as resolve_exc:
                             last_scene_error, next_scene_error_log = report_scene_retry(
-                                args.scene, resolve_exc, last_scene_error, next_scene_error_log
+                                topo.name, resolve_exc, last_scene_error, next_scene_error_log
                             )
                             next_scene_check = time.perf_counter() + SCENE_RESOLUTION_POLL_S
                         else:
@@ -693,25 +800,28 @@ def main() -> None:
                             )
                             if (new_source_w, new_source_h) != (source_w, source_h):
                                 p, state, single_apply_fn, split_apply_fn = apply_source_resize(
-                                    p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
+                                    p, control, animator, topo.ref, output_id, cell_top_id, cell_bottom_id,
                                     new_source_w, new_source_h,
                                 )
                                 source_w, source_h = new_source_w, new_source_h
                             else:
                                 single_apply_fn, split_apply_fn = build_apply_fns(
-                                    args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                                    topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
                                 )
-                                reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                                if live:
+                                    reapply_state(animator, state, single_apply_fn, split_apply_fn)
                             if control is not None:
                                 control.set_connected(True)
                             last_scene_error = None
                             connection_lost_logged = False
                             next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
                     else:
-                        new_source_w, new_source_h = source_size(obs, args.scene, control_id)
+                        new_source_w, new_source_h = source_size(
+                            obs, topo.ref, control_id if control_id is not None else output_id
+                        )
                         if new_source_w and new_source_h and (new_source_w, new_source_h) != (source_w, source_h):
                             p, state, single_apply_fn, split_apply_fn = apply_source_resize(
-                                p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
+                                p, control, animator, topo.ref, output_id, cell_top_id, cell_bottom_id,
                                 new_source_w, new_source_h,
                             )
                             source_w, source_h = new_source_w, new_source_h
@@ -721,15 +831,51 @@ def main() -> None:
                 if control is not None:
                     p, current_fps, upper_body_wanted, paused = control.get_controls()
                     action = control.pop_action()
+                    # Not reachable through the dock yet: adapters/control.py's
+                    if action == "live":
+                        live = True
+                    elif action == "no-live":
+                        live = False
                     if upper_body_wanted != current_upper_body:
                         detector = build_detector(args.detector, upper_body_wanted, args.yolo_model)
                         current_upper_body = upper_body_wanted
                         control.set_detector_name(detector.name)
                     target_period = 1.0 / current_fps
 
+                if live != live_prev:
+                    if live:
+                        reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                    else:
+                        # Not control_id: in PoC mode that item is the 16:9
+                        # reference view, which going off air should not hide.
+                        off_ids = (output_id, cell_top_id, cell_bottom_id)
+                        obs.request_batch(
+                            [enabled_patch(topo.ref, i, False) for i in off_ids], execution_type="SERIAL_REALTIME"
+                        )
+                    live_prev = live
+                    if control is not None:
+                        control.set_live(live)
+
                 t0 = time.perf_counter()
                 jpeg = frames.grab()
                 t1 = time.perf_counter()
+
+                # A live sensor's frames never repeat bit-for-bit; a decoder
+                # fed by a scene item nothing renders serves the same JPEG
+                # every time. Fingerprint rather than diff the raw bytes.
+                fingerprint = hashlib.blake2b(jpeg, digest_size=8).digest()
+                if fingerprint == frame_fingerprint:
+                    frozen_streak += 1
+                else:
+                    frozen_streak = 1
+                    frozen_logged = False
+                frame_fingerprint = fingerprint
+                if frozen_streak > FROZEN_SOURCE_THRESHOLD and not frozen_logged:
+                    print(
+                        f"Source « {topo.image_source_name} » figée : {frozen_streak} images identiques d'affilée."
+                    )
+                    frozen_logged = True
+
                 if use_pose_features:
                     poses = detector.detect_poses(jpeg)
                     boxes = [p.box for p in poses]
@@ -766,10 +912,12 @@ def main() -> None:
                 # A recenter always reaches OBS; an ordinary command is held back while paused.
                 emitted = cmd is not None and (action == "recenter" or not paused)
                 if emitted:
-                    emit_command(
-                        animator, cmd, single_apply_fn, split_apply_fn, args.ease_min_ms, args.ease_max_ms, source_h
-                    )
-                    stats["send"].append((time.perf_counter() - t3) * 1000)
+                    if live:
+                        emit_command(
+                            animator, cmd, single_apply_fn, split_apply_fn, args.ease_min_ms, args.ease_max_ms,
+                            source_h,
+                        )
+                        stats["send"].append((time.perf_counter() - t3) * 1000)
                     commands_emitted += 1
 
                 if control is not None:
@@ -778,7 +926,7 @@ def main() -> None:
                         "detect": stats["detect"][-1],
                         "policy": stats["policy"][-1],
                     }
-                    if emitted:
+                    if emitted and live:
                         stage_ms["emit"] = stats["send"][-1]
                     if feature_extractor is not None or use_pose_features:
                         stage_ms["features"] = stats["features"][-1]
@@ -825,28 +973,29 @@ def main() -> None:
                 # close over the old ones by value and must be rebuilt too.
                 try:
                     (
-                        control_id, output_id, cell_top_id, cell_bottom_id,
-                        new_source_w, new_source_h, cam_uuid,
-                    ) = resolve_scene(obs, args.scene, current_size=(source_w, source_h))
+                        topo, control_id, output_id, cell_top_id, cell_bottom_id,
+                        new_source_w, new_source_h,
+                    ) = resolve_scene(obs, topo, current_size=(source_w, source_h))
                 except (SceneNotReady, ObsWsError) as resolve_exc:
                     # A scene mid-rebuild (setup_scene --force) makes this fail too: keep the
                     # stale ids and retry next iteration instead of killing the loop over it.
                     last_scene_error, next_scene_error_log = report_scene_retry(
-                        args.scene, resolve_exc, last_scene_error, next_scene_error_log
+                        topo.name, resolve_exc, last_scene_error, next_scene_error_log
                     )
                     time.sleep(SCENE_RESOLUTION_POLL_S)
                 else:
                     if (new_source_w, new_source_h) != (source_w, source_h):
                         p, state, single_apply_fn, split_apply_fn = apply_source_resize(
-                            p, control, animator, args.scene, output_id, cell_top_id, cell_bottom_id,
+                            p, control, animator, topo.ref, output_id, cell_top_id, cell_bottom_id,
                             new_source_w, new_source_h,
                         )
                         source_w, source_h = new_source_w, new_source_h
                     else:
                         single_apply_fn, split_apply_fn = build_apply_fns(
-                            args.scene, output_id, cell_top_id, cell_bottom_id, source_w, source_h
+                            topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
                         )
-                        reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                        if live:
+                            reapply_state(animator, state, single_apply_fn, split_apply_fn)
                     if control is not None:
                         control.set_connected(True)
                     last_scene_error = None

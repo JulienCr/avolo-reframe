@@ -6,9 +6,10 @@ Run as: uv run python -m scripts.setup_scene
 import argparse
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
-from adapters.obsws import ObsWs, ObsWsError
+from adapters.obsws import ObsWs, ObsWsError, SceneRef
 from scripts.collection import ensure_scene_collection
 from scripts.layout import (
     AVOCAM_KIND,
@@ -38,6 +39,8 @@ SETUP_SCENE_CONFIG_DESTS = {
 }
 
 _DEVICE_PROPERTY = "video_device_id" if CAM_KIND == "dshow_input" else "device"
+
+SCENE_REF: SceneRef = {"sceneName": SCENE_NAME}
 
 BG_COLOR = 0xFF1E1E1E
 OVERLAY_NAME = "RF Overlay"
@@ -126,9 +129,30 @@ def normalize(name: str) -> str:
     return name.replace("\xa0", " ")
 
 
-def scene_exists(obs: ObsWs) -> bool:
+def scene_exists(obs: ObsWs, name: str) -> bool:
     scenes = obs.request("GetSceneList")["scenes"]
-    return any(s["sceneName"] == SCENE_NAME for s in scenes)
+    return any(s["sceneName"] == name for s in scenes)
+
+
+def wait_for_release(obs: ObsWs, scene_name: str | None, input_names: Sequence[str]) -> None:
+    """Poll until scene_name and input_names are gone from OBS's own lists.
+
+    obs-websocket removals complete asynchronously: a rebuild started too soon
+    can collide with a scene or source name OBS has not actually released yet.
+    """
+    deadline = time.perf_counter() + TEARDOWN_TIMEOUT_S
+    stuck: list[str] = []
+    while time.perf_counter() < deadline:
+        scenes = {s["sceneName"] for s in obs.request("GetSceneList")["scenes"]}
+        inputs = {i["inputName"] for i in obs.request("GetInputList")["inputs"]}
+        stuck = ([scene_name] if scene_name and scene_name in scenes else []) + [
+            n for n in input_names if n in inputs
+        ]
+        if not stuck:
+            return
+        time.sleep(POLL_INTERVAL_S)
+    print(f"OBS n'a pas libéré {', '.join(stuck)} après {TEARDOWN_TIMEOUT_S:g}s.")
+    sys.exit(1)
 
 
 def teardown_existing_scene(obs: ObsWs) -> None:
@@ -137,20 +161,7 @@ def teardown_existing_scene(obs: ObsWs) -> None:
     removed = [name for name in (FRAME_NAME, CAM_NAME, BG_NAME, OVERLAY_NAME) if name in existing_inputs]
     for name in removed:
         obs.request("RemoveInput", {"inputName": name})
-
-    # obs-websocket removals complete asynchronously: a rebuild started too soon
-    # can collide with a scene or source name OBS has not actually released yet.
-    deadline = time.perf_counter() + TEARDOWN_TIMEOUT_S
-    stuck: list[str] = []
-    while time.perf_counter() < deadline:
-        scenes = {s["sceneName"] for s in obs.request("GetSceneList")["scenes"]}
-        inputs = {i["inputName"] for i in obs.request("GetInputList")["inputs"]}
-        stuck = ([SCENE_NAME] if SCENE_NAME in scenes else []) + [n for n in removed if n in inputs]
-        if not stuck:
-            return
-        time.sleep(POLL_INTERVAL_S)
-    print(f"OBS n'a pas libéré {', '.join(stuck)} après {TEARDOWN_TIMEOUT_S:g}s.")
-    sys.exit(1)
+    wait_for_release(obs, SCENE_NAME, removed)
 
 
 def create_color_source(obs: ObsWs, name: str, color: int) -> int:
@@ -167,16 +178,17 @@ def create_color_source(obs: ObsWs, name: str, color: int) -> int:
     return response["sceneItemId"]
 
 
-def set_transform(obs: ObsWs, item_id: int, patch: dict) -> None:
+def set_transform(obs: ObsWs, ref: SceneRef, item_id: int, patch: dict) -> None:
     obs.request(
         "SetSceneItemTransform",
-        {"sceneName": SCENE_NAME, "sceneItemId": item_id, "sceneItemTransform": patch},
+        {**ref, "sceneItemId": item_id, "sceneItemTransform": patch},
     )
 
 
-def set_camera_view(obs: ObsWs, item_id: int, x: float, y: float, w: float, h: float) -> None:
+def set_camera_view(obs: ObsWs, ref: SceneRef, item_id: int, x: float, y: float, w: float, h: float) -> None:
     set_transform(
         obs,
+        ref,
         item_id,
         {
             "positionX": x,
@@ -285,14 +297,12 @@ def wait_for_resolution(
     return int(w), int(h)
 
 
-def enforce_z_order(
-    obs: ObsWs, bg: int, control: int, output: int, cell_top: int, cell_bottom: int, overlay: int
-) -> None:
+def enforce_z_order(obs: ObsWs, ref: SceneRef, item_ids: Sequence[int]) -> None:
     # Index 0 is the bottom of the render stack; higher indices draw on top.
-    for index, item_id in enumerate((bg, control, output, cell_top, cell_bottom, overlay)):
+    for index, item_id in enumerate(item_ids):
         obs.request(
             "SetSceneItemIndex",
-            {"sceneName": SCENE_NAME, "sceneItemId": item_id, "sceneItemIndex": index},
+            {**ref, "sceneItemId": item_id, "sceneItemIndex": index},
         )
 
 
@@ -310,19 +320,21 @@ def media_input_settings(path: str) -> dict:
     }
 
 
-def create_overlay_source(obs: ObsWs, control_port: int) -> int:
+def create_overlay_source(
+    obs: ObsWs, ref: SceneRef, name: str, control_port: int, x: float, y: float, w: float, h: float
+) -> int:
     """Transparent Browser Source polling /api/state and /api/features, drawing
     detections and the current framing over the control view."""
     response = obs.request(
         "CreateInput",
         {
-            "sceneName": SCENE_NAME,
-            "inputName": OVERLAY_NAME,
+            **ref,
+            "inputName": name,
             "inputKind": "browser_source",
             "inputSettings": {
                 "url": f"http://127.0.0.1:{control_port}/overlay.html",
-                "width": CONTROL_W,
-                "height": CONTROL_H,
+                "width": w,
+                "height": h,
                 "shutdown": False,
                 "restart_when_active": False,
             },
@@ -332,15 +344,16 @@ def create_overlay_source(obs: ObsWs, control_port: int) -> int:
     item_id = response["sceneItemId"]
     set_transform(
         obs,
+        ref,
         item_id,
         {
-            "positionX": CONTROL_X,
-            "positionY": CONTROL_Y,
+            "positionX": x,
+            "positionY": y,
             "alignment": 5,
             "boundsType": "OBS_BOUNDS_STRETCH",
             "boundsAlignment": 0,
-            "boundsWidth": CONTROL_W,
-            "boundsHeight": CONTROL_H,
+            "boundsWidth": w,
+            "boundsHeight": h,
         },
     )
     return item_id
@@ -380,7 +393,7 @@ def build_scene(
     obs.request("CreateScene", {"sceneName": SCENE_NAME})
 
     bg_item = create_color_source(obs, BG_NAME, BG_COLOR)
-    set_transform(obs, bg_item, {"positionX": 0, "positionY": 0, "alignment": 5})
+    set_transform(obs, SCENE_REF, bg_item, {"positionX": 0, "positionY": 0, "alignment": 5})
 
     if media_file:
         cam_kind, cam_settings = MEDIA_KIND, media_input_settings(media_file)
@@ -417,12 +430,12 @@ def build_scene(
         else:
             print("Center Stage : non applicable (spécifique à macOS).")
 
-    set_camera_view(obs, control_item, CONTROL_X, CONTROL_Y, CONTROL_W, CONTROL_H)
+    set_camera_view(obs, SCENE_REF, control_item, CONTROL_X, CONTROL_Y, CONTROL_W, CONTROL_H)
 
     output_item = obs.request(
         "CreateSceneItem", {"sceneName": SCENE_NAME, "sourceName": CAM_NAME, "sceneItemEnabled": True}
     )["sceneItemId"]
-    set_camera_view(obs, output_item, OUTPUT_X, OUTPUT_Y, OUTPUT_W, OUTPUT_H)
+    set_camera_view(obs, SCENE_REF, output_item, OUTPUT_X, OUTPUT_Y, OUTPUT_W, OUTPUT_H)
 
     # Split mode's two stacked cells: same input, two more views, hidden
     # until split mode shows them — single mode is the starting state.
@@ -430,15 +443,19 @@ def build_scene(
     cell_top_item = obs.request(
         "CreateSceneItem", {"sceneName": SCENE_NAME, "sourceName": CAM_NAME, "sceneItemEnabled": False}
     )["sceneItemId"]
-    set_camera_view(obs, cell_top_item, OUTPUT_X, OUTPUT_Y, OUTPUT_W, cell_h)
+    set_camera_view(obs, SCENE_REF, cell_top_item, OUTPUT_X, OUTPUT_Y, OUTPUT_W, cell_h)
     cell_bottom_item = obs.request(
         "CreateSceneItem", {"sceneName": SCENE_NAME, "sourceName": CAM_NAME, "sceneItemEnabled": False}
     )["sceneItemId"]
-    set_camera_view(obs, cell_bottom_item, OUTPUT_X, OUTPUT_Y + cell_h, OUTPUT_W, cell_h)
+    set_camera_view(obs, SCENE_REF, cell_bottom_item, OUTPUT_X, OUTPUT_Y + cell_h, OUTPUT_W, cell_h)
 
-    overlay_item = create_overlay_source(obs, control_port)
+    overlay_item = create_overlay_source(
+        obs, SCENE_REF, OVERLAY_NAME, control_port, CONTROL_X, CONTROL_Y, CONTROL_W, CONTROL_H
+    )
 
-    enforce_z_order(obs, bg_item, control_item, output_item, cell_top_item, cell_bottom_item, overlay_item)
+    enforce_z_order(
+        obs, SCENE_REF, (bg_item, control_item, output_item, cell_top_item, cell_bottom_item, overlay_item)
+    )
 
     if avocam_ip:
         # The AvoCam plugin only starts receiving once its scene item is in program.
@@ -488,7 +505,7 @@ def main() -> None:
     try:
         with ObsWs(url=args.url, password=args.password) as obs:
             ensure_scene_collection(obs, COLLECTION_NAME)
-            if scene_exists(obs):
+            if scene_exists(obs, SCENE_NAME):
                 if not args.force:
                     print(f"La scène « {SCENE_NAME} » existe déjà. Relancez avec --force pour la reconstruire.")
                     sys.exit(1)
@@ -507,13 +524,13 @@ def main() -> None:
                 print(f"Erreur OBS : {exc}")
                 # A camera pick or property lookup can fail mid-build, leaving
                 # the scene and its sources half-created: clean up before exiting.
-                if scene_exists(obs):
+                if scene_exists(obs, SCENE_NAME):
                     teardown_existing_scene(obs)
                 sys.exit(1)
             except SystemExit as exc:
                 # pick_device, the Center Stage guard and wait_for_resolution
                 # exit(1) directly, bypassing the except above: clean up here too.
-                if exc.code not in (0, None) and scene_exists(obs):
+                if exc.code not in (0, None) and scene_exists(obs, SCENE_NAME):
                     try:
                         teardown_existing_scene(obs)
                     except ObsWsError as cleanup_exc:

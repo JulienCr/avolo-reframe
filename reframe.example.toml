@@ -16,6 +16,8 @@ url = "ws://127.0.0.1:4455"
 # un vrai mot de passe : ce fichier n'est qu'un exemple.
 password = ""
 control_port = 4466  # port du dock de contrôle HTTP (0 pour le désactiver)
+# Ignoré par scripts.run quand --cam est passé : le port vient alors de
+# scripts.layout_lsa.CAMERAS, sauf si --control-port est aussi passé explicitement.
 
 # scene n'est utilisé que par scripts.run (le nom de scène est fixe côté
 # setup_scene : scripts.layout.SCENE_NAME).

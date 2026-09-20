@@ -49,6 +49,7 @@ class ControlState:
         self.fps = fps
         self.upper_body = upper_body
         self.paused = False
+        self.live = True
         self.connected = True
         self.crop = {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
         self.mode = "single"
@@ -112,6 +113,11 @@ class ControlState:
         with self.lock:
             return self.params, self.fps, self.upper_body, self.paused
 
+    def set_live(self, live: bool) -> None:
+        """Mirror the loop's own on-air state, so the dock shows what it does."""
+        with self.lock:
+            self.live = live
+
     def pop_action(self) -> str | None:
         with self.lock:
             return self.pending_actions.pop(0) if self.pending_actions else None
@@ -164,6 +170,7 @@ class ControlState:
                 "stats": stats,
                 "connected": self.connected,
                 "paused": self.paused,
+                "live": self.live,
             }
 
 
@@ -242,8 +249,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             self._send_error_json(400, str(exc))
             return
         action = payload.get("action")
-        if action not in ("pause", "resume", "recenter"):
-            self._send_error_json(400, "action must be pause, resume or recenter")
+        if action not in ("pause", "resume", "recenter", "live", "no-live"):
+            self._send_error_json(400, "action must be pause, resume, recenter, live or no-live")
             return
         self.server.state.request_action(action)
         self._send_json(self.server.state.snapshot())

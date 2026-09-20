@@ -9,6 +9,28 @@ from adapters.obsws import ObsWs
 _COLLECTION_SWITCH_TIMEOUT_S = 30.0
 
 
+def refuse_if_output_active(obs: ObsWs, what: str) -> None:
+    """Raise SystemExit(1) if streaming or recording is active right now."""
+    stream_active = obs.request("GetStreamStatus")["outputActive"]
+    record_active = obs.request("GetRecordStatus")["outputActive"]
+    if stream_active or record_active:
+        print(f"Refus de {what} : un stream ou un enregistrement est en cours.")
+        raise SystemExit(1)
+
+
+def require_scene_collection(obs: ObsWs, expected: str) -> None:
+    """Read-only guard: exit unless expected is the currently active collection.
+
+    The duplicate WIP collection shares every uuid with production, so a
+    uuid-addressed request landing on the wrong one hits production. This is
+    the only backstop.
+    """
+    current = obs.request("GetSceneCollectionList")["currentSceneCollectionName"]
+    if current != expected:
+        print(f"Collection de scènes active « {current} », attendue « {expected} ».")
+        raise SystemExit(1)
+
+
 def ensure_scene_collection(obs: ObsWs, collection_name: str) -> None:
     """Switch OBS to collection_name, creating it if absent; refuses while live.
 
@@ -21,14 +43,7 @@ def ensure_scene_collection(obs: ObsWs, collection_name: str) -> None:
         print(f"Collection de scènes déjà active : {collection_name}")
         return
 
-    stream_active = obs.request("GetStreamStatus")["outputActive"]
-    record_active = obs.request("GetRecordStatus")["outputActive"]
-    if stream_active or record_active:
-        print(
-            f"Refus de changer de collection de scènes ({previous} -> {collection_name}) : "
-            "un stream ou un enregistrement est en cours."
-        )
-        raise SystemExit(1)
+    refuse_if_output_active(obs, f"changer de collection de scènes ({previous} -> {collection_name})")
 
     exists = collection_name in current["sceneCollections"]
     request_type = "SetCurrentSceneCollection" if exists else "CreateSceneCollection"

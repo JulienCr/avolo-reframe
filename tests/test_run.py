@@ -1,16 +1,26 @@
-"""Tests for the 1080p-scaled ease reference distance in scripts.run."""
+"""Tests for scripts.run: the 1080p-scaled ease reference distance, and the
+camera-item selection that make_run_lsa's multi-camera topology depends on.
+"""
 
 import dataclasses
 
+import pytest
+
 from adapters.control import ControlState
+from adapters.obsws import SceneRef
+from core.geometry import Rect
 from core.policy import PolicyParams, REFERENCE_SOURCE_H, initial_state
 from scripts.layout import AVOCAM_KIND, AVOCAM_PLACEHOLDER_SIZE, CAM_NAME
 from scripts.run import (
     REFERENCE_DISTANCE_PX,
+    SceneNotReady,
+    Topology,
     apply_source_resize,
+    build_apply_fns,
     cam_items_match,
     reapply_state,
     scaled_duration_ms,
+    select_camera_items,
     should_wait_for_first_frame,
 )
 
@@ -63,7 +73,7 @@ def test_apply_source_resize_keeps_dock_tuning_and_syncs_control():
     animator = _FakeAnimator()
 
     new_p, state, single_fn, split_fn = apply_source_resize(
-        p, control, animator, "scene", 3, 4, 5, 3840, 2160
+        p, control, animator, {"sceneName": "scene"}, 3, 4, 5, 3840, 2160
     )
 
     assert (new_p.source_w, new_p.source_h) == (3840, 2160)
@@ -105,3 +115,79 @@ def test_should_wait_for_first_frame_non_avocam_source_at_placeholder_size():
 
 def test_should_wait_for_first_frame_avocam_already_at_4k():
     assert should_wait_for_first_frame(AVOCAM_KIND, (3840, 2160), (3840, 2160)) is False
+
+
+# select_camera_items fixture: 9 items shaped like the LSA Vertical Scene --
+# 3 cameras (distinct sourceUuid) x (full item, cell top, cell bottom), no
+# control item (control_w=None), mirroring scripts.layout_lsa's geometry.
+_CAM_UUIDS = ("uuid-main", "uuid-cour", "uuid-jardin")
+_FULL_BOUNDS = (1080.0, 1920.0)
+_CELL_BOUNDS = (1080.0, 960.0)
+
+
+def _lsa_scene() -> tuple[list[dict], dict[int, dict]]:
+    specs = []
+    next_id = 1
+    for uuid in _CAM_UUIDS:
+        specs.append((uuid, next_id, _FULL_BOUNDS, 0.0))
+        specs.append((uuid, next_id + 1, _CELL_BOUNDS, 0.0))
+        specs.append((uuid, next_id + 2, _CELL_BOUNDS, 960.0))
+        next_id += 3
+    items = [{"sceneItemId": item_id, "sourceUuid": uuid} for uuid, item_id, _, _ in specs]
+    transforms = {
+        item_id: {"boundsWidth": w, "boundsHeight": h, "positionY": y} for _, item_id, (w, h), y in specs
+    }
+    return items, transforms
+
+
+def _lsa_topo(source_uuid: str) -> Topology:
+    return Topology(
+        name=source_uuid,
+        ref={"sceneUuid": "vertical-scene-uuid"},
+        image_source_name=f"--- CAM {source_uuid}",
+        image_source_uuid=source_uuid,
+        source_uuid=source_uuid,
+        full_bounds=_FULL_BOUNDS,
+        cell_bounds=_CELL_BOUNDS,
+        control_w=None,
+    )
+
+
+def test_select_camera_items_filters_by_source_uuid_only():
+    # The silent, new-in-this-change failure mode: without uuid filtering,
+    # cropping a neighboring camera's tile would raise nothing.
+    items, transforms = _lsa_scene()
+
+    control_id, full_id, cell_top_id, cell_bottom_id = select_camera_items(items, transforms, _lsa_topo("uuid-cour"))
+
+    assert (control_id, full_id, cell_top_id, cell_bottom_id) == (None, 4, 5, 6)
+
+
+def test_select_camera_items_orders_cells_by_position_y():
+    items, transforms = _lsa_scene()
+
+    _, _, cell_top_id, cell_bottom_id = select_camera_items(items, transforms, _lsa_topo("uuid-jardin"))
+
+    assert (cell_top_id, cell_bottom_id) == (8, 9)
+    assert transforms[cell_top_id]["positionY"] < transforms[cell_bottom_id]["positionY"]
+
+
+def test_select_camera_items_raises_on_incomplete_camera():
+    items, transforms = _lsa_scene()
+    items = [i for i in items if not (i["sourceUuid"] == "uuid-main" and i["sceneItemId"] == 3)]
+
+    with pytest.raises(SceneNotReady):
+        select_camera_items(items, transforms, _lsa_topo("uuid-main"))
+
+
+def test_apply_fns_requests_carry_scene_uuid_and_no_scene_name():
+    ref: SceneRef = {"sceneUuid": "vertical-scene-uuid"}
+    single_fn, split_fn = build_apply_fns(ref, 4, 5, 6, 1080, 1920)
+    rect = Rect(0.0, 0.0, 1080.0, 1920.0)
+
+    requests = single_fn((rect,)) + split_fn((rect, rect))
+
+    assert requests
+    for _, payload in requests:
+        assert payload.get("sceneUuid") == "vertical-scene-uuid"
+        assert "sceneName" not in payload

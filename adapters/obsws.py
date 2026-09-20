@@ -33,6 +33,11 @@ _BACKOFF_CAP = 10.0
 _BACKOFF_ATTEMPTS = 6
 
 
+# Requests that target a scene take either form; a non-main canvas is only
+# addressable by uuid, so call sites pass the ref through instead of a name.
+SceneRef = dict[str, str]
+
+
 class ObsWsError(Exception):
     """Raised on connection failure, timeout, or a request whose status.result is false."""
 
