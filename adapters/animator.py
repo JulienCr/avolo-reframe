@@ -19,14 +19,10 @@ _Job = tuple[tuple[Rect, ...], tuple[Rect, ...], float, float, ApplyFn]
 class Animator:
     """Tweens a tuple of rects together at a fixed tick rate.
 
-    One rect for a single crop, two for split's stacked cells: apply_fn
-    turns the interpolated tuple into the OBS request batch for a tick.
-    apply_fn should carry only what changes every tick (the crop); a
-    level-state change like item visibility belongs in jump()/play()'s
-    prelude instead, sent once rather than on every tick of a tween.
-
-    All socket I/O happens on the background thread started by start():
-    play() and jump() only ever touch the job under a lock, so a single
+    One rect for a single crop, two for split's stacked cells. apply_fn
+    carries only what changes every tick; level state such as visibility
+    goes in jump()/play()'s prelude, sent once instead of on every tick.
+    All socket I/O happens on the thread started by start(), so a single
     ObsWs connection is never driven from two threads at once.
     """
 

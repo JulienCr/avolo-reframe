@@ -326,10 +326,8 @@ def test_visibility_prelude_patches_when_no_mode_applied_yet():
 
 
 def test_emit_command_skips_visibility_prelude_within_same_mode():
-    # The in-mode tracking move that motivated this fix: same mode across
-    # ~72 ticks of a play() tween must send the visibility triplet at most
-    # once, not on every tick -- here, not even once, since it was already
-    # applied before this command.
+    # A tracking move inside one mode must not resend the visibility
+    # triplet: it was already applied before this command.
     animator = _FakeAnimator()
     visibility_fn = make_visibility_fn({"sceneName": "scene"}, 4, 5, 6)
     target = Rect(0.0, 0.0, 100.0, 100.0)
