@@ -16,6 +16,7 @@ from websockets.sync.client import ClientConnection, connect
 _OP_HELLO = 0
 _OP_IDENTIFY = 1
 _OP_IDENTIFIED = 2
+_OP_EVENT = 5
 _OP_REQUEST = 6
 _OP_REQUEST_RESPONSE = 7
 _OP_REQUEST_BATCH = 8
@@ -50,10 +51,12 @@ class ObsWs:
         url: str = "ws://127.0.0.1:4455",
         password: str | None = None,
         timeout: float = 5.0,
+        events: int = 0,
     ) -> None:
         self._url = url
         self._password = password
         self._timeout = timeout
+        self._events = events
         self._ws: ClientConnection | None = None
         self._ids = itertools.count(1)
 
@@ -152,7 +155,7 @@ class ObsWs:
 
     def _handshake(self, ws: ClientConnection) -> None:
         hello = self._recv_op(ws, _OP_HELLO, lambda d: True)
-        identify = {"rpcVersion": 1, "eventSubscriptions": 0}
+        identify = {"rpcVersion": 1, "eventSubscriptions": self._events}
         auth = hello.get("authentication")
         if auth:
             identify["authentication"] = self._build_auth(auth["challenge"], auth["salt"])
@@ -170,24 +173,38 @@ class ObsWs:
         digest = hashlib.sha256(text.encode("utf-8")).digest()
         return base64.b64encode(digest).decode("utf-8")
 
+    def next_event(self, timeout: float | None = None) -> dict | None:
+        """Next event's eventData plus its eventType, or None if none arrived within timeout."""
+        ws = self._require_connected()
+        d = self._recv_op(ws, _OP_EVENT, lambda d: True, timeout=timeout, optional=True)
+        if d is None:
+            return None
+        return {"eventType": d["eventType"], **d.get("eventData", {})}
+
     def _await(self, op: int, matches, timeout: float | None = None) -> dict:
         return self._recv_op(self._require_connected(), op, matches, timeout=timeout)
 
-    def _recv_op(self, ws: ClientConnection, op: int, matches, timeout: float | None = None) -> dict:
+    def _recv_op(
+        self, ws: ClientConnection, op: int, matches, timeout: float | None = None, optional: bool = False
+    ) -> dict | None:
         deadline = time.perf_counter() + (timeout if timeout is not None else self._timeout)
         while True:
             remaining = deadline - time.perf_counter()
             if remaining <= 0:
+                if optional:
+                    return None
                 raise ObsWsError(f"timed out waiting for op {op}")
             try:
                 raw = ws.recv(timeout=remaining)
             except TimeoutError as exc:
+                if optional:
+                    return None
                 raise ObsWsError(f"timed out waiting for op {op}") from exc
             except ConnectionClosed as exc:
                 if ws is self._ws:
                     self._ws = None
                 raise ObsWsError(f"connection closed while waiting for op {op}: {exc}") from exc
             frame = json.loads(raw)
-            # Discard events (op 5) and any frame not matching what we asked for.
+            # Discard any frame not matching what we asked for (events, when op != _OP_EVENT).
             if frame.get("op") == op and matches(frame.get("d", {})):
                 return frame["d"]

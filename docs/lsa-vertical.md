@@ -1,4 +1,4 @@
-# Recadrage vertical sur les trois caméras de « LSA 2026 »
+# Recadrage vertical sur les caméras de « LSA 2026 »
 
 Mesuré le 20 septembre 2026, sur la machine de production (Windows 11, i9-14900K,
 RTX 4090), OBS 32.2.2 et obs-websocket 5.7.4. Ce document porte ce que la mise en
@@ -13,14 +13,18 @@ production, faite dans l'interface d'OBS. La production n'a jamais été ouverte
 
 `scripts/setup_lsa.py` construit deux choses :
 
-- dans la scène `Vertical Scene` du canevas `Aitum Vertical` (1080×1920), **neuf
+- dans la scène `Vertical Scene` du canevas `Aitum Vertical` (1080×1920), **douze
   items**, trois par caméra : un plein cadre en `bounds` 1080×1920 et deux
   cellules de split en 1080×960, toutes en `OBS_BOUNDS_SCALE_INNER` ;
-- sur le canevas principal, la scène **`DEBUG - REFRAM`** : trois tuiles 16:9 de
-  960×540 et, par-dessus chacune, la `browser_source` d'overlay de sa boucle.
+- sur le canevas principal, la scène **`DEBUG - REFRAM`** : quatre tuiles 16:9 de
+  960×540 en grille 2×2 et, par-dessus chacune, la `browser_source` d'overlay de
+  sa boucle.
 
-Chaque item a pour source la **scène de sortie** de sa caméra (`--- CAM Main`,
-`--- CAM Cour`, `--- CAM Jardin`), pas l'input. Le recadrage hérite donc du
+Les quatre caméras sont `--- CAM Main`, `--- CAM Main Zoom`, `--- CAM Cour` et
+`--- CAM Jardin`. Main Zoom est un quatrième pipeline sur la même caméra physique
+que Main, avec son propre punch-in : il a ses propres items pour que le vertical
+montre ce que le 16:9 montre. Chaque item a pour source la **scène de sortie** de
+sa caméra, pas l'input. Le recadrage hérite donc du
 punch-in déjà posé en régie (Jardin 1,30×, Cour 1,34×), des variantes 70s/NB et
 du miroir de `cam-jardin-comp`. Et l'image détectée est exactement l'image
 recadrée.
@@ -28,16 +32,40 @@ recadrée.
 ## Comment lancer
 
 ```bash
-make setup-lsa                 # construit les 9 items + DEBUG - REFRAM
-make run-main ARGS="--yolo-model models/yolo11m-pose.engine --fps 15"
-make run-cour ARGS="--yolo-model models/yolo11m-pose.engine --fps 15 --no-live"
+make setup-lsa    # construit les 12 items + DEBUG - REFRAM
+make run-lsa      # les 4 boucles + le chef de pupitre, un seul Ctrl-C les arrête
 uv run python tests/corpus/tools/verify_lsa_crops.py
 ```
 
-Les deux arguments comptent. `reframe.toml` porte les réglages du PoC, c'est-à-dire
-le `.pt` à 30 im/s : à trois boucles cela demande 1,27 voie d'inférence sérialisée
-et les trois dériveraient sous leur cadence. Le `.engine` à 15 im/s est ce qui a
-été mesuré ici.
+`make run-lsa` est la commande de régie. Les cibles `run-main`, `run-mainzoom`,
+`run-cour` et `run-jardin` restent, pour déboguer une caméra seule.
+
+Le réglage vit dans **`reframe.lsa.toml`**, distinct de `reframe.toml` qui porte
+celui du PoC. Les deux écarts qui comptent : le moteur TensorRT plutôt que le
+`.pt`, et 15 im/s plutôt que 30. À quatre boucles le `.pt` demanderait plus d'une
+voie d'inférence sérialisée et les boucles dériveraient sous leur cadence. Un seul
+fichier pour les quatre caméras, volontairement : la topologie vit dans
+`scripts/layout_lsa.py`, et quatre fichiers dupliqueraient `[policy]` et `[split]`,
+où une dérive entre caméras ne se verrait dans aucun test.
+
+## Suivre la caméra à l'antenne
+
+`scripts/director.py` souscrit au seul évènement `CurrentProgramSceneChanged` et
+bascule l'antenne du vertical quand la régie change de caméra sur le 16:9. Il
+pilote les boucles par l'API HTTP qui existe déjà.
+
+Trois choix qui ne sont pas arbitraires :
+
+- **Un processus séparé**, parce que `ObsWs._recv_op` boucle jusqu'à trouver
+  l'opcode attendu : un évènement arrivant sur la connexion d'une boucle serait
+  silencieusement jeté.
+- **Aucun `GetCurrentProgramScene`, jamais.** La requête est interdite ici depuis
+  qu'un appel sur un programme vide a coïncidé avec un plantage d'OBS le
+  15 septembre. Le chef de pupitre ne demande donc rien au démarrage : il attend
+  le premier évènement, et le vertical reste sur la caméra en place jusque-là.
+- **Toute scène non mappée ne fait rien.** Seules les quatre scènes `--- CAM *`
+  font basculer le vertical ; un titre, un `brb` ou une scène composite le
+  laissent où il est, puisqu'il n'a que des caméras à montrer.
 
 ## Ce que le préflight a établi
 
@@ -85,6 +113,27 @@ sur les trois :
 
 Trois moteurs TensorRT coûtent 46 Mio de GPU chacun. `--features` reste gratuit
 hors macOS, comme documenté : il réutilise les poses déjà calculées.
+
+## Une image vide ne coûte pas ce que coûte une image pleine
+
+Relevé le 20 septembre au soir, quatre boucles à 15 im/s, `--- CAM Main` allumée sur
+un sujet réel pendant que Cour et Jardin servaient encore la mire « NO SIGNAL » :
+
+| Caméra | Contenu | Détection médiane | p90 |
+|---|---|---|---|
+| main | un sujet | **12,5 ms** | 14,1 ms |
+| mainzoom | le même sujet | 12,7 ms | 14,2 ms |
+| cour | mire | 6,6 ms | 7,5 ms |
+| jardin | mire | 7,1 ms | 7,9 ms |
+
+**Le coût double dès qu'il y a quelqu'un à détecter.** Les 7,9 ms annoncées plus haut
+ont été mesurées sur quatre mires, donc sur le cas le moins cher, et elles ne
+disent rien de la régie en conditions réelles. À quatre caméras réellement
+occupées, 60 inférences par seconde à 12,5 ms occupent 0,75 d'une voie d'inférence
+sérialisée ; le p90 de 14,1 ms porte ce chiffre à 0,85. La marge existe, elle n'est
+pas confortable, et c'est ce qui justifie de démarrer à 15 im/s plutôt qu'à 30.
+
+Un relevé à quatre caméras réellement allumées reste à faire.
 
 ## L'état « à l'antenne »
 
@@ -145,3 +194,10 @@ verticale est rendue. À confirmer caméras allumées.
   d'OBS plusieurs secondes. À trois boucles, une source qui s'ouvre les gèle
   toutes les trois. Jamais éprouvé.
 - **La cadence au-delà de 15 im/s.** 30 im/s par caméra n'a pas été mesuré.
+- **La quatrième boucle.** Les chiffres de charge ci-dessus ont été relevés à
+  **trois** boucles, avant que Main Zoom n'ait ses propres items. Une quatrième
+  ajoute 15 inférences par seconde et une capture de plus ; l'extrapolation est
+  rassurante, elle n'est pas une mesure.
+- **Le chef de pupitre en conditions réelles.** Sa logique de correspondance est
+  testée, son comportement sur un vrai changement de scène de programme ne l'est
+  pas encore.

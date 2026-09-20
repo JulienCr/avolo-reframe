@@ -41,13 +41,17 @@ class Camera:
         return f"{OVERLAY_PREFIX} {self.key}"
 
 
+# Main Zoom is a fourth pipeline on the same physical camera as Main, with its
+# own punch-in: it gets its own items so the vertical matches what the 16:9 shows.
 CAMERAS: dict[str, Camera] = {
     "main": Camera("main", "--- CAM Main", "f3baafec-e357-41bb-8b28-51dc1d676c50",
                    4466, 0.0, 0.0),
+    "mainzoom": Camera("mainzoom", "--- CAM Main Zoom", "a9fd8472-bb1e-478f-b801-0cfb94e8a177",
+                       4469, 960.0, 0.0),
     "cour": Camera("cour", "--- CAM Cour", "0ae610f7-f7ac-4633-be7d-bb7314a7410e",
-                   4467, 960.0, 0.0),
+                   4467, 0.0, 540.0),
     "jardin": Camera("jardin", "--- CAM Jardin", "c5b447b2-64fc-40f3-8a42-5009f7e54f1c",
-                     4468, 0.0, 540.0),
+                     4468, 960.0, 540.0),
 }
 
 assert abs(VERTICAL_W / VERTICAL_H - RATIO) < 1e-9

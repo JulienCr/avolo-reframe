@@ -60,6 +60,7 @@ html, body {
         </div>
     </div>
     <div class="stats">
+        <div class="stat-row"><span>Antenne</span><span id="stat-live">-</span></div>
         <div class="stat-row"><span>Détecteur</span><span id="stat-detector">-</span></div>
         <div class="stat-row"><span>Itérations/s</span><span id="stat-ips">-</span></div>
         <div class="stat-row" id="row-detrate"><span>Taux de détection</span><span id="stat-detrate">-</span></div>
@@ -74,6 +75,7 @@ html, body {
         <label><input type="checkbox" id="t-upper"> Buste seulement</label>
     </div>
     <div class="button-row">
+        <button id="btn-live">Antenne</button>
         <button id="btn-pause">Pause</button>
         <button id="btn-recenter">Recentrer</button>
     </div>
@@ -149,6 +151,7 @@ function buildControls() {
         lastLocalChange.upper_body = Date.now();
         sendParams({ upper_body: $('t-upper').checked });
     });
+    $('btn-live').onclick = () => postAction(latestState && latestState.live ? 'no-live' : 'live');
     $('btn-pause').onclick = () => postAction(latestState && latestState.paused ? 'resume' : 'pause');
     $('btn-recenter').onclick = () => postAction('recenter');
 
@@ -180,6 +183,7 @@ function syncControls(state) {
     if (!recentlyChanged('snap')) $('t-snap').checked = state.params.snap;
     if (!recentlyChanged('upper_body')) $('t-upper').checked = state.upper_body;
     $('btn-pause').textContent = state.paused ? 'Reprendre' : 'Pause';
+    $('btn-live').textContent = state.live ? "Couper l'antenne" : "Prendre l'antenne";
 }
 
 function renderLatency(stats) {
@@ -195,6 +199,7 @@ function renderLatency(stats) {
 }
 
 function updateStats(state) {
+    $('stat-live').textContent = state.live ? 'Oui' : 'Non';
     $('stat-detector').textContent = state.detector;
     $('stat-ips').textContent = state.iterations_per_s.toFixed(1);
     $('stat-detrate').textContent = Math.round(state.detection_rate * 100) + ' %';

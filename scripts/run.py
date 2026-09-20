@@ -20,8 +20,9 @@ from adapters.frames import FrameSource
 from adapters.obsws import ObsWs, ObsWsError, SceneRef
 from core.geometry import Rect, clamp_to_source, expand, fit_ratio, to_crop, union
 from core.policy import Command, PolicyParams, PolicyState, REFERENCE_SOURCE_H, height_floor, initial_state, step
+from scripts.collection import require_scene_collection
 from scripts.layout import AVOCAM_KIND, AVOCAM_PLACEHOLDER_SIZE, CAM_NAME, CONTROL_W, OUTPUT_H, OUTPUT_W, RATIO, SCENE_NAME
-from scripts.layout_lsa import CAMERAS, CELL_H, VERTICAL_H, VERTICAL_SCENE_UUID, VERTICAL_W
+from scripts.layout_lsa import CAMERAS, CELL_H, COLLECTION_NAME, VERTICAL_H, VERTICAL_SCENE_UUID, VERTICAL_W
 
 # Shared with setup_scene.py's --control-port default, so the loop and the
 # overlay Browser Source URL it bakes in can never drift apart.
@@ -482,12 +483,23 @@ def make_split_apply_fn(
     return apply_fn
 
 
+def make_disable_apply_fn(ref: SceneRef, output_id: int, cell_top_id: int, cell_bottom_id: int) -> ApplyFn:
+    """Disables the owned items, ignoring the rects. Never control_id: in PoC
+    mode that item is the 16:9 reference view, which going off air should not
+    hide. Meant for animator.jump(), so the disable is serialized with its ticks.
+    """
+    def apply_fn(rects: tuple[Rect, ...]) -> list[tuple[str, dict]]:
+        return [enabled_patch(ref, i, False) for i in (output_id, cell_top_id, cell_bottom_id)]
+    return apply_fn
+
+
 def build_apply_fns(
     ref: SceneRef, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
-) -> tuple[ApplyFn, ApplyFn]:
+) -> tuple[ApplyFn, ApplyFn, ApplyFn]:
     return (
         make_single_apply_fn(ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
         make_split_apply_fn(ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
+        make_disable_apply_fn(ref, output_id, cell_top_id, cell_bottom_id),
     )
 
 
@@ -495,26 +507,32 @@ def apply_source_resize(
     p: PolicyParams,
     control: ControlState | None,
     animator: Animator,
+    live: bool,
     ref: SceneRef,
     output_id: int,
     cell_top_id: int,
     cell_bottom_id: int,
     new_source_w: int,
     new_source_h: int,
-) -> tuple[PolicyParams, PolicyState, ApplyFn, ApplyFn]:
+) -> tuple[PolicyParams, PolicyState, ApplyFn, ApplyFn, ApplyFn]:
     """Adopt a source's new size: the pixel-space policy state is reset, not
     rescaled; params and dock keep their tuning, only source_w/source_h change.
+
+    Off air (live=False), the rebuilt callbacks are handed back but never
+    applied: an observing-only instance must not write to OBS or take the
+    canvas.
     """
     print(f"Taille de la source changée : {p.source_w}x{p.source_h} -> {new_source_w}x{new_source_h}.")
     p = dataclasses.replace(p, source_w=new_source_w, source_h=new_source_h)
     state = initial_state(p)
     if control is not None:
         control.replace_source_size(new_source_w, new_source_h)
-    single_apply_fn, split_apply_fn = build_apply_fns(
+    single_apply_fn, split_apply_fn, disable_apply_fn = build_apply_fns(
         ref, output_id, cell_top_id, cell_bottom_id, new_source_w, new_source_h
     )
-    animator.jump((state.current,), single_apply_fn)
-    return p, state, single_apply_fn, split_apply_fn
+    if live:
+        animator.jump((state.current,), single_apply_fn)
+    return p, state, single_apply_fn, split_apply_fn, disable_apply_fn
 
 
 def reapply_state(animator: Animator, state: PolicyState, single_apply_fn: ApplyFn, split_apply_fn: ApplyFn) -> None:
@@ -683,6 +701,8 @@ def main() -> None:
     obs = ObsWs(url=args.url, password=args.password)
     try:
         obs.connect()
+        if args.cam:
+            require_scene_collection(obs, COLLECTION_NAME)
         topo, control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, topo)
         size_id = control_id if control_id is not None else output_id
         source_w, source_h = source_size(obs, topo.ref, size_id)
@@ -720,7 +740,7 @@ def main() -> None:
     )
     state = initial_state(p)
 
-    single_apply_fn, split_apply_fn = build_apply_fns(
+    single_apply_fn, split_apply_fn, disable_apply_fn = build_apply_fns(
         topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
     )
 
@@ -770,7 +790,10 @@ def main() -> None:
     last_scene_error: str | None = None
     next_scene_error_log = 0.0
     connection_lost_logged = False
-    live_prev = live
+    # Always True, never `live`: startup is treated as arriving from on-air, so a
+    # --no-live start still disables owned items on its first iteration instead
+    # of skipping the live->no-live transition that would otherwise do it.
+    live_prev = True
     frame_fingerprint: bytes | None = None
     frozen_streak = 0
     frozen_logged = False
@@ -779,6 +802,10 @@ def main() -> None:
         while deadline is None or time.perf_counter() < deadline:
             try:
                 if time.perf_counter() >= next_scene_check:
+                    # Same cadence as the scene-item poll below: a stray GetSceneCollectionList
+                    # is as cheap as the GetSceneItemList it rides alongside.
+                    if args.cam:
+                        require_scene_collection(obs, COLLECTION_NAME)
                     ids = tuple(i for i in (control_id, output_id, cell_top_id, cell_bottom_id) if i is not None)
                     if not scene_items_match(obs, topo.ref, ids, topo.source_uuid):
                         # A half-built rebuild (setup_scene creating items over some ms) must
@@ -799,13 +826,13 @@ def main() -> None:
                                 "Scène reconstruite pendant que la boucle tournait : ré-résolution des scene items."
                             )
                             if (new_source_w, new_source_h) != (source_w, source_h):
-                                p, state, single_apply_fn, split_apply_fn = apply_source_resize(
-                                    p, control, animator, topo.ref, output_id, cell_top_id, cell_bottom_id,
+                                p, state, single_apply_fn, split_apply_fn, disable_apply_fn = apply_source_resize(
+                                    p, control, animator, live, topo.ref, output_id, cell_top_id, cell_bottom_id,
                                     new_source_w, new_source_h,
                                 )
                                 source_w, source_h = new_source_w, new_source_h
                             else:
-                                single_apply_fn, split_apply_fn = build_apply_fns(
+                                single_apply_fn, split_apply_fn, disable_apply_fn = build_apply_fns(
                                     topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
                                 )
                                 if live:
@@ -820,8 +847,8 @@ def main() -> None:
                             obs, topo.ref, control_id if control_id is not None else output_id
                         )
                         if new_source_w and new_source_h and (new_source_w, new_source_h) != (source_w, source_h):
-                            p, state, single_apply_fn, split_apply_fn = apply_source_resize(
-                                p, control, animator, topo.ref, output_id, cell_top_id, cell_bottom_id,
+                            p, state, single_apply_fn, split_apply_fn, disable_apply_fn = apply_source_resize(
+                                p, control, animator, live, topo.ref, output_id, cell_top_id, cell_bottom_id,
                                 new_source_w, new_source_h,
                             )
                             source_w, source_h = new_source_w, new_source_h
@@ -831,7 +858,6 @@ def main() -> None:
                 if control is not None:
                     p, current_fps, upper_body_wanted, paused = control.get_controls()
                     action = control.pop_action()
-                    # Not reachable through the dock yet: adapters/control.py's
                     if action == "live":
                         live = True
                     elif action == "no-live":
@@ -846,12 +872,10 @@ def main() -> None:
                     if live:
                         reapply_state(animator, state, single_apply_fn, split_apply_fn)
                     else:
-                        # Not control_id: in PoC mode that item is the 16:9
-                        # reference view, which going off air should not hide.
-                        off_ids = (output_id, cell_top_id, cell_bottom_id)
-                        obs.request_batch(
-                            [enabled_patch(topo.ref, i, False) for i in off_ids], execution_type="SERIAL_REALTIME"
-                        )
+                        # Routed through the animator's own connection, via jump():
+                        # it replaces any in-flight tween job, so a tick already
+                        # queued by a previous play() can't re-enable an item after us.
+                        animator.jump((state.current,), disable_apply_fn)
                     live_prev = live
                     if control is not None:
                         control.set_live(live)
@@ -985,13 +1009,13 @@ def main() -> None:
                     time.sleep(SCENE_RESOLUTION_POLL_S)
                 else:
                     if (new_source_w, new_source_h) != (source_w, source_h):
-                        p, state, single_apply_fn, split_apply_fn = apply_source_resize(
-                            p, control, animator, topo.ref, output_id, cell_top_id, cell_bottom_id,
+                        p, state, single_apply_fn, split_apply_fn, disable_apply_fn = apply_source_resize(
+                            p, control, animator, live, topo.ref, output_id, cell_top_id, cell_bottom_id,
                             new_source_w, new_source_h,
                         )
                         source_w, source_h = new_source_w, new_source_h
                     else:
-                        single_apply_fn, split_apply_fn = build_apply_fns(
+                        single_apply_fn, split_apply_fn, disable_apply_fn = build_apply_fns(
                             topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
                         )
                         if live:

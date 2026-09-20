@@ -18,6 +18,7 @@ from scripts.run import (
     apply_source_resize,
     build_apply_fns,
     cam_items_match,
+    make_disable_apply_fn,
     reapply_state,
     scaled_duration_ms,
     select_camera_items,
@@ -72,8 +73,8 @@ def test_apply_source_resize_keeps_dock_tuning_and_syncs_control():
     control = ControlState(params=p, detector_name="x", fps=12.0, upper_body=False)
     animator = _FakeAnimator()
 
-    new_p, state, single_fn, split_fn = apply_source_resize(
-        p, control, animator, {"sceneName": "scene"}, 3, 4, 5, 3840, 2160
+    new_p, state, single_fn, split_fn, disable_fn = apply_source_resize(
+        p, control, animator, True, {"sceneName": "scene"}, 3, 4, 5, 3840, 2160
     )
 
     assert (new_p.source_w, new_p.source_h) == (3840, 2160)
@@ -83,6 +84,36 @@ def test_apply_source_resize_keeps_dock_tuning_and_syncs_control():
     assert control_p.margin == 0.3
     assert state == initial_state(new_p)
     assert animator.calls == [((state.current,), single_fn)]
+
+
+def test_apply_source_resize_off_air_rebuilds_without_applying():
+    # Regression for the P1 where a resize while merely observing could take
+    # the canvas: off air, the callbacks are rebuilt but never handed to the
+    # animator, so nothing reaches OBS or re-enables the output item.
+    p = PolicyParams(margin=0.3)
+    animator = _FakeAnimator()
+
+    new_p, state, single_fn, split_fn, disable_fn = apply_source_resize(
+        p, None, animator, False, {"sceneName": "scene"}, 3, 4, 5, 3840, 2160
+    )
+
+    assert (new_p.source_w, new_p.source_h) == (3840, 2160)
+    assert animator.calls == []
+
+
+def test_make_disable_apply_fn_disables_owned_items_only():
+    # Regression for the P1 race with the animator's 60Hz thread: the disable
+    # must name exactly output/cell_top/cell_bottom (never a control item),
+    # so routing it through animator.jump() can't re-enable the wrong thing.
+    apply_fn = make_disable_apply_fn({"sceneName": "scene"}, 10, 11, 12)
+
+    requests = apply_fn((Rect(0.0, 0.0, 1.0, 1.0),))
+
+    assert requests == [
+        ("SetSceneItemEnabled", {"sceneName": "scene", "sceneItemId": 10, "sceneItemEnabled": False}),
+        ("SetSceneItemEnabled", {"sceneName": "scene", "sceneItemId": 11, "sceneItemEnabled": False}),
+        ("SetSceneItemEnabled", {"sceneName": "scene", "sceneItemId": 12, "sceneItemEnabled": False}),
+    ]
 
 
 def _scene_items(uuid: str) -> list[dict]:
@@ -182,10 +213,10 @@ def test_select_camera_items_raises_on_incomplete_camera():
 
 def test_apply_fns_requests_carry_scene_uuid_and_no_scene_name():
     ref: SceneRef = {"sceneUuid": "vertical-scene-uuid"}
-    single_fn, split_fn = build_apply_fns(ref, 4, 5, 6, 1080, 1920)
+    single_fn, split_fn, disable_fn = build_apply_fns(ref, 4, 5, 6, 1080, 1920)
     rect = Rect(0.0, 0.0, 1080.0, 1920.0)
 
-    requests = single_fn((rect,)) + split_fn((rect, rect))
+    requests = single_fn((rect,)) + split_fn((rect, rect)) + disable_fn((rect,))
 
     assert requests
     for _, payload in requests:

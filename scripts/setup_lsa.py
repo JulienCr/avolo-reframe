@@ -88,15 +88,26 @@ def check_camera_scenes(obs: ObsWs) -> None:
 
 
 def clear_vertical_scene(obs: ObsWs, force: bool) -> None:
+    """Remove only the camera items this script owns, never a hand-added one.
+
+    Anything an operator puts in the vertical scene by hand (a logo, a lower
+    third) is not described by CAMERAS, so a rebuild must leave it alone.
+    """
     items = obs.request("GetSceneItemList", VERTICAL_REF)["sceneItems"]
-    if not items:
+    owned_uuids = {cam.scene_uuid for cam in CAMERAS.values()}
+    owned = [i for i in items if i["sourceUuid"] in owned_uuids]
+    foreign = [i for i in items if i["sourceUuid"] not in owned_uuids]
+    if foreign:
+        names = ", ".join(sorted({i["sourceName"] for i in foreign}))
+        print(f"Items conservés (ajoutés hors de ce script) : {names}")
+    if not owned:
         return
     if not force:
-        print(f"La scène « {VERTICAL_SCENE_NAME} » contient déjà {len(items)} item(s). Relancez avec --force.")
+        print(f"La scène « {VERTICAL_SCENE_NAME} » contient déjà {len(owned)} item(s) caméra. Relancez avec --force.")
         sys.exit(1)
     # Never RemoveScene here: recreating a scene of a non-main canvas is
     # unproven, and losing it would break the whole vertical canvas.
-    for item in items:
+    for item in owned:
         obs.request("RemoveSceneItem", {**VERTICAL_REF, "sceneItemId": item["sceneItemId"]})
 
 

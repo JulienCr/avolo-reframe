@@ -1,0 +1,48 @@
+# Configuration des boucles de régie (scripts.run --cam), collection « LSA 2026 WIP ».
+# Copiez ce fichier en reframe.lsa.toml et passez-le par --config :
+#
+#   uv run python -m scripts.run --cam main --config reframe.lsa.toml
+#
+# Un seul fichier pour les quatre caméras, volontairement : la topologie
+# (scènes, uuid, ports, tuiles de debug) vit dans scripts/layout_lsa.py, pas ici.
+# Un fichier par caméra dupliquerait [policy] et [split], et trois caméras
+# réglées différemment ne se voient dans aucun test — elles se voient à l'antenne.
+
+[connection]
+url = "ws://127.0.0.1:4455"
+password = ""
+# control_port est ignoré quand --cam est présent : il vient de la table.
+control_port = 4466
+
+[detector]
+detector = "yolo"
+upper_body = false
+# Le moteur TensorRT, pas le .pt : à quatre boucles, 14,1 ms par inférence
+# demandent plus d'une voie sérialisée et les boucles dérivent sous leur cadence.
+yolo_model = "models/yolo11m-pose.engine"
+
+[loop]
+# 15 im/s par caméra est ce qui a été mesuré à trois boucles (voir
+# docs/lsa-vertical.md). La politique décide sur des secondes, elle n'en souffre pas.
+fps = 15.0
+width = 640
+duration = 0.0
+log = ""
+features = true
+
+[policy]
+margin = 0.18
+min_crop_h = 960.0
+dead_zone = 0.12
+dwell_ms = 400.0
+ease_ms = 1200.0
+ease_min_ms = 900.0
+ease_max_ms = 1100.0
+snap = false
+hold_ms = 1500.0
+eye_line = 0.33
+zoom_dead_zone = 0.25
+
+[split]
+split_enabled = true
+split_min_gap = 0.15
