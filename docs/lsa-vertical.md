@@ -96,8 +96,35 @@ Trois choix qui ne sont pas arbitraires :
   15 septembre. Le chef de pupitre ne demande donc rien au démarrage : il attend
   le premier évènement, et le vertical reste sur la caméra en place jusque-là.
 - **Toute scène non mappée ne fait rien.** Seules les quatre scènes `--- CAM *`
-  font basculer le vertical ; un titre, un `brb` ou une scène composite le
-  laissent où il est, puisqu'il n'a que des caméras à montrer.
+  et les scènes à miroir (ci-dessous) font basculer le vertical ; un titre
+  générique ou une scène composite le laissent où il est.
+
+## Composer par visibilité : `Coming`, `End` et la suite
+
+**Mesuré le 20 septembre 2026** : `SetCurrentProgramScene` sur une scène du
+canevas vertical est **refusé**, `code=604`, « The specified scene is not
+from the main canvas and cannot be set as the program scene ». Le canevas
+vertical ne change donc jamais de scène de programme ; `Vertical Scene` en
+reste l'unique scène, et tout ce qu'elle doit montrer d'autre que les quatre
+caméras — `End`, `Coming`, et ce que l'opérateur ajoutera — n'existe que
+comme un **miroir** : un item plein canevas, désactivé par défaut, que
+`setup_lsa` crée pour chaque scène du canevas vertical autre que
+`Vertical Scene` elle-même (vérifié en créant puis supprimant un item de test
+sur `Coming` : il rapporte `sourceWidth/sourceHeight = 1080x1920`, sa
+résolution native).
+
+`director.py` fait la correspondance **par nom** : la scène de programme
+`Coming` du 16:9 affiche le miroir vertical nommé `Coming`. Ajouter une paire
+demain ne touche pas au code, seulement à OBS : créer les deux scènes puis
+relancer `setup_lsa`.
+
+Propriété partagée, chacun ses items : le chef de pupitre possède les
+miroirs, chaque boucle ne possède que ses trois items caméra ; ni l'un ni
+l'autre ne touche au `(Logo)` de l'opérateur. L'état vertical ne se relit pas
+(`currentProgramSceneName` à `None` hors canevas principal), donc chaque
+bascule réaffirme l'état complet — quelle caméra est live, quel miroir est
+visible — sans mémoriser l'état précédent : une dérive se rattrape à la
+bascule suivante plutôt que de s'accumuler.
 
 ## Ce que le préflight a établi
 

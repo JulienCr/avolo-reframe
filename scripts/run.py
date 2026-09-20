@@ -11,6 +11,7 @@ import math
 import sys
 import time
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 from adapters.animator import Animator, ApplyFn
@@ -23,6 +24,10 @@ from core.policy import Command, PolicyParams, PolicyState, REFERENCE_SOURCE_H, 
 from scripts.collection import require_scene_collection
 from scripts.layout import AVOCAM_KIND, AVOCAM_PLACEHOLDER_SIZE, CAM_NAME, CONTROL_W, OUTPUT_H, OUTPUT_W, RATIO, SCENE_NAME
 from scripts.layout_lsa import CAMERAS, CELL_H, COLLECTION_NAME, VERTICAL_H, VERTICAL_SCENE_UUID, VERTICAL_W
+
+# "single" or "split" -> the enable/disable triplet for that mode; a prelude
+# sent once per animator job, never an ApplyFn ticked on every tween frame.
+VisibilityFn = Callable[[str], list[tuple[str, dict]]]
 
 # Shared with setup_scene.py's --control-port default, so the loop and the
 # overlay Browser Source URL it bakes in can never drift apart.
@@ -492,33 +497,27 @@ def transform_patch(ref: SceneRef, item_id: int, transform: dict) -> tuple[str, 
 def make_single_apply_fn(
     ref: SceneRef,
     output_id: int,
-    cell_top_id: int,
-    cell_bottom_id: int,
     source_w: int,
     source_h: int,
 ) -> ApplyFn:
-    """One rect drives the output crop; cells stay hidden."""
+    """One rect drives the output crop. Visibility is level state, sent once
+    per mode change via VisibilityFn/prelude, never on every tick here.
+    """
     def apply_fn(rects: tuple[Rect, ...]) -> list[tuple[str, dict]]:
         (rect,) = rects
-        return [
-            enabled_patch(ref, output_id, True),
-            enabled_patch(ref, cell_top_id, False),
-            enabled_patch(ref, cell_bottom_id, False),
-            transform_patch(ref, output_id, crop_patch(rect, source_w, source_h)),
-        ]
+        return [transform_patch(ref, output_id, crop_patch(rect, source_w, source_h))]
     return apply_fn
 
 
 def make_split_apply_fn(
-    ref: SceneRef, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
+    ref: SceneRef, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
 ) -> ApplyFn:
-    """Two rects drive the two cells; the single output hides."""
+    """Two rects drive the two cells. Visibility is level state, sent once
+    per mode change via VisibilityFn/prelude, never on every tick here.
+    """
     def apply_fn(rects: tuple[Rect, ...]) -> list[tuple[str, dict]]:
         top, bottom = rects
         return [
-            enabled_patch(ref, output_id, False),
-            enabled_patch(ref, cell_top_id, True),
-            enabled_patch(ref, cell_bottom_id, True),
             transform_patch(ref, cell_top_id, crop_patch(top, source_w, source_h)),
             transform_patch(ref, cell_bottom_id, crop_patch(bottom, source_w, source_h)),
         ]
@@ -535,13 +534,41 @@ def make_disable_apply_fn(ref: SceneRef, output_id: int, cell_top_id: int, cell_
     return apply_fn
 
 
+def make_visibility_fn(ref: SceneRef, output_id: int, cell_top_id: int, cell_bottom_id: int) -> VisibilityFn:
+    """Level-state visibility for "single" (output on, cells off) or "split"
+    (output off, cells on) -- a prelude sent once per animator job, not an
+    ApplyFn ticked on every frame of a tween.
+    """
+    def visibility_fn(mode: str) -> list[tuple[str, dict]]:
+        output_on = mode == "single"
+        return [
+            enabled_patch(ref, output_id, output_on),
+            enabled_patch(ref, cell_top_id, not output_on),
+            enabled_patch(ref, cell_bottom_id, not output_on),
+        ]
+    return visibility_fn
+
+
+def visibility_prelude(
+    visibility_fn: VisibilityFn, mode: str, applied_mode: str | None
+) -> list[tuple[str, dict]] | None:
+    """Patches for `mode`, or None when it's already the last mode applied.
+
+    The guard against re-asserting visibility on every command: without it,
+    a mode that keeps cutting (snap, recenter) would refight an operator's
+    manual override the same way the old per-tick writes did.
+    """
+    return None if mode == applied_mode else visibility_fn(mode)
+
+
 def build_apply_fns(
     ref: SceneRef, output_id: int, cell_top_id: int, cell_bottom_id: int, source_w: int, source_h: int
-) -> tuple[ApplyFn, ApplyFn, ApplyFn]:
+) -> tuple[ApplyFn, ApplyFn, ApplyFn, VisibilityFn]:
     return (
-        make_single_apply_fn(ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
-        make_split_apply_fn(ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h),
+        make_single_apply_fn(ref, output_id, source_w, source_h),
+        make_split_apply_fn(ref, cell_top_id, cell_bottom_id, source_w, source_h),
         make_disable_apply_fn(ref, output_id, cell_top_id, cell_bottom_id),
+        make_visibility_fn(ref, output_id, cell_top_id, cell_bottom_id),
     )
 
 
@@ -556,9 +583,12 @@ def apply_source_resize(
     cell_bottom_id: int,
     new_source_w: int,
     new_source_h: int,
-) -> tuple[PolicyParams, PolicyState, ApplyFn, ApplyFn, ApplyFn]:
+    applied_visibility_mode: str | None,
+) -> tuple[PolicyParams, PolicyState, ApplyFn, ApplyFn, ApplyFn, VisibilityFn, str | None]:
     """Adopt a source's new size: the pixel-space policy state is reset, not
     rescaled; params and dock keep their tuning, only source_w/source_h change.
+    The reset always lands in single mode, so visibility is reasserted (guarded
+    by applied_visibility_mode) in case the resize caught the loop in split.
 
     Off air (live=False), the rebuilt callbacks are handed back but never
     applied: an observing-only instance must not write to OBS or take the
@@ -569,20 +599,35 @@ def apply_source_resize(
     state = initial_state(p)
     if control is not None:
         control.replace_source_size(new_source_w, new_source_h)
-    single_apply_fn, split_apply_fn, disable_apply_fn = build_apply_fns(
+    single_apply_fn, split_apply_fn, disable_apply_fn, visibility_fn = build_apply_fns(
         ref, output_id, cell_top_id, cell_bottom_id, new_source_w, new_source_h
     )
     if live:
-        animator.jump((state.current,), single_apply_fn)
-    return p, state, single_apply_fn, split_apply_fn, disable_apply_fn
+        prelude = visibility_prelude(visibility_fn, state.mode, applied_visibility_mode)
+        animator.jump((state.current,), single_apply_fn, prelude=prelude)
+        applied_visibility_mode = state.mode
+    return p, state, single_apply_fn, split_apply_fn, disable_apply_fn, visibility_fn, applied_visibility_mode
 
 
-def reapply_state(animator: Animator, state: PolicyState, single_apply_fn: ApplyFn, split_apply_fn: ApplyFn) -> None:
-    """Cut OBS back to the policy's current framing, e.g. onto freshly rebuilt, uncropped items."""
+def reapply_state(
+    animator: Animator,
+    state: PolicyState,
+    single_apply_fn: ApplyFn,
+    split_apply_fn: ApplyFn,
+    visibility_fn: VisibilityFn,
+) -> str:
+    """Cut OBS back to the policy's current framing and visibility, e.g. onto
+    freshly rebuilt items whose actual OBS-side visibility is unknown -- so,
+    unlike emit_command, this always resends rather than trusting a tracked mode.
+
+    Returns state.mode, for the caller to update its tracked applied mode.
+    """
+    prelude = visibility_fn(state.mode)
     if state.mode == "split" and state.cells is not None:
-        animator.jump(state.cells, split_apply_fn)
+        animator.jump(state.cells, split_apply_fn, prelude=prelude)
     else:
-        animator.jump((state.current,), single_apply_fn)
+        animator.jump((state.current,), single_apply_fn, prelude=prelude)
+    return state.mode
 
 
 def travel_distance(frm: Rect, to: Rect) -> float:
@@ -603,25 +648,36 @@ def emit_command(
     cmd: Command,
     single_apply_fn: ApplyFn,
     split_apply_fn: ApplyFn,
+    visibility_fn: VisibilityFn,
+    applied_visibility_mode: str | None,
     ease_min_ms: float,
     ease_max_ms: float,
     source_h: int,
-) -> None:
+) -> str:
+    """Emits cmd's rects, plus a visibility prelude only when cmd.mode differs
+    from applied_visibility_mode (a mode switch always cuts, so the prelude
+    always lands on a jump(), atomically with that cut's first crop).
+
+    Returns the mode now applied, for the caller to track across calls.
+    """
+    prelude = visibility_prelude(visibility_fn, cmd.mode, applied_visibility_mode)
+
     if cmd.mode == "split":
         to = cmd.cells
         if cmd.frm_cells is None or cmd.duration_ms <= 0:
-            animator.jump(to, split_apply_fn)
+            animator.jump(to, split_apply_fn, prelude=prelude)
         else:
-            animator.play(cmd.frm_cells, to, cmd.duration_ms, split_apply_fn)
-        return
+            animator.play(cmd.frm_cells, to, cmd.duration_ms, split_apply_fn, prelude=prelude)
+        return cmd.mode
 
     to = (cmd.target,)
     if cmd.frm is None or cmd.duration_ms <= 0:
-        animator.jump(to, single_apply_fn)
-        return
+        animator.jump(to, single_apply_fn, prelude=prelude)
+        return cmd.mode
     distance = travel_distance(cmd.frm, cmd.target)
     duration_ms = scaled_duration_ms(distance, cmd.duration_ms, ease_min_ms, ease_max_ms, source_h)
-    animator.play((cmd.frm,), to, duration_ms, single_apply_fn)
+    animator.play((cmd.frm,), to, duration_ms, single_apply_fn, prelude=prelude)
+    return cmd.mode
 
 
 def rect_dict(r: Rect | None) -> dict | None:
@@ -785,15 +841,19 @@ def main() -> None:
     )
     state = initial_state(p)
 
-    single_apply_fn, split_apply_fn, disable_apply_fn = build_apply_fns(
+    single_apply_fn, split_apply_fn, disable_apply_fn, visibility_fn = build_apply_fns(
         topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
     )
+    # None: OBS's actual item visibility at startup is unknown (scene items
+    # from setup_scene/setup_lsa), so the first jump always sends it.
+    applied_visibility_mode: str | None = None
 
     animator = Animator(url=args.url, password=args.password)
     animator.start()
     live = args.live
     if live:
-        animator.jump((state.current,), single_apply_fn)
+        animator.jump((state.current,), single_apply_fn, prelude=visibility_fn(state.mode))
+        applied_visibility_mode = state.mode
 
     control = None
     if args.control_port:
@@ -870,17 +930,22 @@ def main() -> None:
                                 "Scène reconstruite pendant que la boucle tournait : ré-résolution des scene items."
                             )
                             if (new_source_w, new_source_h) != (source_w, source_h):
-                                p, state, single_apply_fn, split_apply_fn, disable_apply_fn = apply_source_resize(
+                                (
+                                    p, state, single_apply_fn, split_apply_fn, disable_apply_fn,
+                                    visibility_fn, applied_visibility_mode,
+                                ) = apply_source_resize(
                                     p, control, animator, live, topo.ref, output_id, cell_top_id, cell_bottom_id,
-                                    new_source_w, new_source_h,
+                                    new_source_w, new_source_h, applied_visibility_mode,
                                 )
                                 source_w, source_h = new_source_w, new_source_h
                             else:
-                                single_apply_fn, split_apply_fn, disable_apply_fn = build_apply_fns(
+                                single_apply_fn, split_apply_fn, disable_apply_fn, visibility_fn = build_apply_fns(
                                     topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
                                 )
                                 if live:
-                                    reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                                    applied_visibility_mode = reapply_state(
+                                        animator, state, single_apply_fn, split_apply_fn, visibility_fn
+                                    )
                             if control is not None:
                                 control.set_connected(True)
                             last_scene_error = None
@@ -891,9 +956,12 @@ def main() -> None:
                             obs, topo.ref, control_id if control_id is not None else output_id
                         )
                         if new_source_w and new_source_h and (new_source_w, new_source_h) != (source_w, source_h):
-                            p, state, single_apply_fn, split_apply_fn, disable_apply_fn = apply_source_resize(
+                            (
+                                p, state, single_apply_fn, split_apply_fn, disable_apply_fn,
+                                visibility_fn, applied_visibility_mode,
+                            ) = apply_source_resize(
                                 p, control, animator, live, topo.ref, output_id, cell_top_id, cell_bottom_id,
-                                new_source_w, new_source_h,
+                                new_source_w, new_source_h, applied_visibility_mode,
                             )
                             source_w, source_h = new_source_w, new_source_h
                         next_scene_check = time.perf_counter() + SCENE_CHECK_INTERVAL_S
@@ -914,12 +982,15 @@ def main() -> None:
 
                 if live != live_prev:
                     if live:
-                        reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                        applied_visibility_mode = reapply_state(
+                            animator, state, single_apply_fn, split_apply_fn, visibility_fn
+                        )
                     else:
                         # Routed through the animator's own connection, via jump():
                         # it replaces any in-flight tween job, so a tick already
                         # queued by a previous play() can't re-enable an item after us.
                         animator.jump((state.current,), disable_apply_fn)
+                        applied_visibility_mode = "off"
                     live_prev = live
                     if control is not None:
                         control.set_live(live)
@@ -981,9 +1052,9 @@ def main() -> None:
                 emitted = cmd is not None and (action == "recenter" or not paused)
                 if emitted:
                     if live:
-                        emit_command(
-                            animator, cmd, single_apply_fn, split_apply_fn, args.ease_min_ms, args.ease_max_ms,
-                            source_h,
+                        applied_visibility_mode = emit_command(
+                            animator, cmd, single_apply_fn, split_apply_fn, visibility_fn, applied_visibility_mode,
+                            args.ease_min_ms, args.ease_max_ms, source_h,
                         )
                         stats["send"].append((time.perf_counter() - t3) * 1000)
                     commands_emitted += 1
@@ -1053,17 +1124,22 @@ def main() -> None:
                     time.sleep(SCENE_RESOLUTION_POLL_S)
                 else:
                     if (new_source_w, new_source_h) != (source_w, source_h):
-                        p, state, single_apply_fn, split_apply_fn, disable_apply_fn = apply_source_resize(
+                        (
+                            p, state, single_apply_fn, split_apply_fn, disable_apply_fn,
+                            visibility_fn, applied_visibility_mode,
+                        ) = apply_source_resize(
                             p, control, animator, live, topo.ref, output_id, cell_top_id, cell_bottom_id,
-                            new_source_w, new_source_h,
+                            new_source_w, new_source_h, applied_visibility_mode,
                         )
                         source_w, source_h = new_source_w, new_source_h
                     else:
-                        single_apply_fn, split_apply_fn, disable_apply_fn = build_apply_fns(
+                        single_apply_fn, split_apply_fn, disable_apply_fn, visibility_fn = build_apply_fns(
                             topo.ref, output_id, cell_top_id, cell_bottom_id, source_w, source_h
                         )
                         if live:
-                            reapply_state(animator, state, single_apply_fn, split_apply_fn)
+                            applied_visibility_mode = reapply_state(
+                                animator, state, single_apply_fn, split_apply_fn, visibility_fn
+                            )
                     if control is not None:
                         control.set_connected(True)
                     last_scene_error = None

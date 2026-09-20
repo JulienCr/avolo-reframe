@@ -89,29 +89,61 @@ def check_camera_scenes(obs: ObsWs) -> None:
             sys.exit(1)
 
 
-def clear_vertical_scene(obs: ObsWs, force: bool) -> None:
-    """Remove only the camera clones this script owns, never a hand-added item.
+def list_mirror_scenes(obs: ObsWs) -> list[dict]:
+    """Every scene of the vertical canvas other than Vertical Scene itself:
+    what an operator adds by hand (Coming, End, ...) for the vertical to mirror.
+    """
+    scenes = obs.request("GetSceneList", {"canvasUuid": VERTICAL_CANVAS_UUID})["scenes"]
+    return [s for s in scenes if s["sceneUuid"] != VERTICAL_SCENE_UUID]
 
-    Anything an operator puts in the vertical scene by hand (a logo, a lower
-    third) is not one of CAMERAS' clone names, so a rebuild leaves it alone.
-    Each clone is dedicated to exactly one item, so RemoveInput alone clears
-    both -- OBS drops a source's scene items wherever it deletes the source.
+
+def create_mirror_item(obs: ObsWs, ref: SceneRef, scene: dict) -> int:
+    """One full-canvas item for scene, disabled by default: director.py shows
+    it only once the matching main-canvas scene becomes the program scene."""
+    response = obs.request("CreateSceneItem", {**ref, "sourceUuid": scene["sceneUuid"], "sceneItemEnabled": False})
+    item_id = response["sceneItemId"]
+    set_camera_view(obs, ref, item_id, 0, 0, VERTICAL_W, VERTICAL_H)
+    return item_id
+
+
+def clear_vertical_scene(obs: ObsWs, force: bool) -> None:
+    """Remove only what this script owns: camera clones and mirror items.
+
+    Three families share the scene: camera clones (source is a source-clone
+    input, identified by name), mirrors (source is a scene of the vertical
+    canvas itself), and anything an operator adds by hand -- e.g. (Logo),
+    whose source is a scene of the main canvas. The source's canvas is the
+    discriminant, checked against OBS (GetSceneList per canvas) rather than
+    assumed from a name.
     """
     items = obs.request("GetSceneItemList", VERTICAL_REF)["sceneItems"]
-    owned_names = {name for cam in CAMERAS.values() for name in cam.clone_names}
-    owned = sorted({i["sourceName"] for i in items if i["sourceName"] in owned_names})
-    foreign = [i for i in items if i["sourceName"] not in owned_names]
+    owned_clone_names = {name for cam in CAMERAS.values() for name in cam.clone_names}
+    mirror_scene_uuids = {s["sceneUuid"] for s in list_mirror_scenes(obs)}
+
+    clone_items = [i for i in items if i["sourceName"] in owned_clone_names]
+    mirror_items = [i for i in items if i["sourceUuid"] in mirror_scene_uuids]
+    owned_ids = {i["sceneItemId"] for i in clone_items} | {i["sceneItemId"] for i in mirror_items}
+    foreign = [i for i in items if i["sceneItemId"] not in owned_ids]
+
     if foreign:
         names = ", ".join(sorted({i["sourceName"] for i in foreign}))
         print(f"Items conservés (ajoutés hors de ce script) : {names}")
-    if not owned:
+    if not clone_items and not mirror_items:
         return
     if not force:
-        print(f"La scène « {VERTICAL_SCENE_NAME} » contient déjà {len(owned)} clone(s) caméra. Relancez avec --force.")
+        print(
+            f"La scène « {VERTICAL_SCENE_NAME} » contient déjà {len(clone_items)} clone(s) caméra et "
+            f"{len(mirror_items)} miroir(s). Relancez avec --force."
+        )
         sys.exit(1)
-    for name in owned:
+
+    clone_names = sorted({i["sourceName"] for i in clone_items})
+    for name in clone_names:
         obs.request("RemoveInput", {"inputName": name})
-    wait_for_release(obs, None, owned)
+    wait_for_release(obs, None, clone_names)
+
+    for item in mirror_items:
+        obs.request("RemoveSceneItem", {**VERTICAL_REF, "sceneItemId": item["sceneItemId"]})
 
 
 def create_camera_clone(obs: ObsWs, ref: SceneRef, clone_name: str, target_scene: str, enabled: bool) -> int:
@@ -186,7 +218,12 @@ def build_debug_scene(obs: ObsWs) -> dict[str, tuple[int, int]]:
     return report
 
 
-def print_report(obs: ObsWs, items_by_cam: dict[str, tuple[int, int, int]], debug_report: dict[str, tuple[int, int]]) -> None:
+def print_report(
+    obs: ObsWs,
+    items_by_cam: dict[str, tuple[int, int, int]],
+    debug_report: dict[str, tuple[int, int]],
+    mirror_items: dict[str, int],
+) -> None:
     print("\n=== Scène verticale ===")
     for key, (full, top, bottom) in items_by_cam.items():
         cam = CAMERAS[key]
@@ -195,6 +232,13 @@ def print_report(obs: ObsWs, items_by_cam: dict[str, tuple[int, int, int]], debu
             f"{key} : « {cam.clone_plain_name} »={full} « {cam.clone_split_top_name} »={top} "
             f"« {cam.clone_split_bottom_name} »={bottom} ({size['sourceWidth']}x{size['sourceHeight']})"
         )
+
+    print("\n=== Miroirs (scènes du canevas vertical) ===")
+    if not mirror_items:
+        print("(aucune scène à mirer)")
+    for name, item_id in mirror_items.items():
+        size = obs.request("GetSceneItemTransform", {**VERTICAL_REF, "sceneItemId": item_id})["sceneItemTransform"]
+        print(f"« {name} » item={item_id} ({size['sourceWidth']}x{size['sourceHeight']}), désactivé")
 
     print("\n=== Contrôle / overlays ===")
     for key, cam in CAMERAS.items():
@@ -223,14 +267,20 @@ def main() -> None:
             for cam in CAMERAS.values():
                 items_by_cam[cam.key] = build_camera_items(obs, VERTICAL_REF, cam)
 
-            all_items = [item_id for triple in items_by_cam.values() for item_id in triple]
+            mirror_items: dict[str, int] = {
+                scene["sceneName"]: create_mirror_item(obs, VERTICAL_REF, scene) for scene in list_mirror_scenes(obs)
+            }
+
+            all_items = [item_id for triple in items_by_cam.values() for item_id in triple] + list(
+                mirror_items.values()
+            )
             enforce_z_order(obs, VERTICAL_REF, all_items)
 
             debug_report: dict[str, tuple[int, int]] = {}
             if not args.no_debug_scene:
                 debug_report = build_debug_scene(obs)
 
-            print_report(obs, items_by_cam, debug_report)
+            print_report(obs, items_by_cam, debug_report, mirror_items)
     except ObsWsError as exc:
         print(f"Erreur OBS : {exc}")
         sys.exit(1)
