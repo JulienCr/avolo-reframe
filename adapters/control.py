@@ -324,6 +324,14 @@ class ControlServer(ThreadingHTTPServer):
 
 def start_server(state: ControlState, port: int, dock_path: Path, overlay_path: Path) -> ControlServer:
     """Serve the dock, the OBS overlay and the control API on a daemon thread; localhost only."""
-    server = ControlServer(state, dock_path.read_bytes(), overlay_path.read_bytes(), port)
+    try:
+        server = ControlServer(state, dock_path.read_bytes(), overlay_path.read_bytes(), port)
+    except OSError as exc:
+        # Without SO_REUSEADDR a port stays unbindable while it drains, so a
+        # relaunch within a couple of minutes hits this rather than a conflict.
+        print(f"Port de contrôle {port} indisponible ({exc.strerror or exc}).")
+        print("Soit une autre boucle l'occupe déjà, soit un lancement précédent le libère encore.")
+        print(f"Vérifiez avec : netstat -ano | findstr :{port}")
+        raise SystemExit(1) from exc
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
