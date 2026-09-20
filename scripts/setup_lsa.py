@@ -14,10 +14,12 @@ from scripts.collection import refuse_if_output_active, require_scene_collection
 from scripts.layout_lsa import (
     CAMERAS,
     CELL_H,
+    CLONE_TYPE_SCENE,
     COLLECTION_NAME,
     DEBUG_SCENE_NAME,
     DEBUG_TILE_H,
     DEBUG_TILE_W,
+    MAIN_CANVAS_NAME,
     VERTICAL_CANVAS_UUID,
     VERTICAL_H,
     VERTICAL_SCENE_NAME,
@@ -88,42 +90,59 @@ def check_camera_scenes(obs: ObsWs) -> None:
 
 
 def clear_vertical_scene(obs: ObsWs, force: bool) -> None:
-    """Remove only the camera items this script owns, never a hand-added one.
+    """Remove only the camera clones this script owns, never a hand-added item.
 
     Anything an operator puts in the vertical scene by hand (a logo, a lower
-    third) is not described by CAMERAS, so a rebuild must leave it alone.
+    third) is not one of CAMERAS' clone names, so a rebuild leaves it alone.
+    Each clone is dedicated to exactly one item, so RemoveInput alone clears
+    both -- OBS drops a source's scene items wherever it deletes the source.
     """
     items = obs.request("GetSceneItemList", VERTICAL_REF)["sceneItems"]
-    owned_uuids = {cam.scene_uuid for cam in CAMERAS.values()}
-    owned = [i for i in items if i["sourceUuid"] in owned_uuids]
-    foreign = [i for i in items if i["sourceUuid"] not in owned_uuids]
+    owned_names = {name for cam in CAMERAS.values() for name in cam.clone_names}
+    owned = sorted({i["sourceName"] for i in items if i["sourceName"] in owned_names})
+    foreign = [i for i in items if i["sourceName"] not in owned_names]
     if foreign:
         names = ", ".join(sorted({i["sourceName"] for i in foreign}))
         print(f"Items conservés (ajoutés hors de ce script) : {names}")
     if not owned:
         return
     if not force:
-        print(f"La scène « {VERTICAL_SCENE_NAME} » contient déjà {len(owned)} item(s) caméra. Relancez avec --force.")
+        print(f"La scène « {VERTICAL_SCENE_NAME} » contient déjà {len(owned)} clone(s) caméra. Relancez avec --force.")
         sys.exit(1)
-    # Never RemoveScene here: recreating a scene of a non-main canvas is
-    # unproven, and losing it would break the whole vertical canvas.
-    for item in owned:
-        obs.request("RemoveSceneItem", {**VERTICAL_REF, "sceneItemId": item["sceneItemId"]})
+    for name in owned:
+        obs.request("RemoveInput", {"inputName": name})
+    wait_for_release(obs, None, owned)
+
+
+def create_camera_clone(obs: ObsWs, ref: SceneRef, clone_name: str, target_scene: str, enabled: bool) -> int:
+    """Create a source-clone input wired as its own item, so OBS shows the
+    operator clone_name rather than the shared target_scene's own name."""
+    response = obs.request(
+        "CreateInput",
+        {
+            **ref,
+            "inputName": clone_name,
+            "inputKind": "source-clone",
+            "inputSettings": {
+                "canvas": MAIN_CANVAS_NAME,
+                "clone": target_scene,
+                "clone_type": CLONE_TYPE_SCENE,
+            },
+            "sceneItemEnabled": enabled,
+        },
+    )
+    return response["sceneItemId"]
 
 
 def build_camera_items(obs: ObsWs, ref: SceneRef, cam: Camera) -> tuple[int, int, int]:
-    """Create the full frame plus the two split cells. Returns their sceneItemIds."""
-    full = obs.request("CreateSceneItem", {**ref, "sourceUuid": cam.scene_uuid, "sceneItemEnabled": cam.key == "main"})[
-        "sceneItemId"
-    ]
+    """Create the plain clone plus the two split-cell clones. Returns their sceneItemIds."""
+    full = create_camera_clone(obs, ref, cam.clone_plain_name, cam.scene_name, enabled=cam.key == "main")
     set_camera_view(obs, ref, full, 0, 0, VERTICAL_W, VERTICAL_H)
 
-    top = obs.request("CreateSceneItem", {**ref, "sourceUuid": cam.scene_uuid, "sceneItemEnabled": False})["sceneItemId"]
+    top = create_camera_clone(obs, ref, cam.clone_split_top_name, cam.scene_name, enabled=False)
     set_camera_view(obs, ref, top, 0, 0, VERTICAL_W, CELL_H)
 
-    bottom = obs.request("CreateSceneItem", {**ref, "sourceUuid": cam.scene_uuid, "sceneItemEnabled": False})[
-        "sceneItemId"
-    ]
+    bottom = create_camera_clone(obs, ref, cam.clone_split_bottom_name, cam.scene_name, enabled=False)
     set_camera_view(obs, ref, bottom, 0, CELL_H, VERTICAL_W, CELL_H)
 
     return full, top, bottom
@@ -170,10 +189,11 @@ def build_debug_scene(obs: ObsWs) -> dict[str, tuple[int, int]]:
 def print_report(obs: ObsWs, items_by_cam: dict[str, tuple[int, int, int]], debug_report: dict[str, tuple[int, int]]) -> None:
     print("\n=== Scène verticale ===")
     for key, (full, top, bottom) in items_by_cam.items():
+        cam = CAMERAS[key]
         size = obs.request("GetSceneItemTransform", {**VERTICAL_REF, "sceneItemId": full})["sceneItemTransform"]
         print(
-            f"{key} : plein={full} cellule_haut={top} cellule_bas={bottom} "
-            f"({size['sourceWidth']}x{size['sourceHeight']})"
+            f"{key} : « {cam.clone_plain_name} »={full} « {cam.clone_split_top_name} »={top} "
+            f"« {cam.clone_split_bottom_name} »={bottom} ({size['sourceWidth']}x{size['sourceHeight']})"
         )
 
     print("\n=== Contrôle / overlays ===")

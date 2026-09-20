@@ -122,14 +122,16 @@ def _scene_items(uuid: str) -> list[dict]:
 
 def test_cam_items_match_same_ids_names_and_uuid():
     items = _scene_items("uuid-old")
-    assert cam_items_match(items, (1, 2, 3, 4), "uuid-old") is True
+    expected = {i: "uuid-old" for i in (1, 2, 3, 4)}
+    assert cam_items_match(items, expected) is True
 
 
 def test_cam_items_match_rejects_rebuilt_source_with_new_uuid():
     # A rebuild reuses the same scene item ids and the same CAM_NAME: only the
     # uuid of the underlying input changes, which is what must be caught here.
     items = _scene_items("uuid-new")
-    assert cam_items_match(items, (1, 2, 3, 4), "uuid-old") is False
+    expected = {i: "uuid-old" for i in (1, 2, 3, 4)}
+    assert cam_items_match(items, expected) is False
 
 
 def test_should_wait_for_first_frame_avocam_placeholder_while_loop_holds_4k():
@@ -149,66 +151,70 @@ def test_should_wait_for_first_frame_avocam_already_at_4k():
 
 
 # select_camera_items fixture: 9 items shaped like the LSA Vertical Scene --
-# 3 cameras (distinct sourceUuid) x (full item, cell top, cell bottom), no
-# control item (control_w=None), mirroring scripts.layout_lsa's geometry.
-_CAM_UUIDS = ("uuid-main", "uuid-cour", "uuid-jardin")
+# 3 cameras x (plain clone, split-top clone, split-bottom clone). No shared
+# uuid and no bounds signature: each item's sourceName is its own clone name.
+_CAM_LABELS = ("Main", "Cour", "Jardin")
 _FULL_BOUNDS = (1080.0, 1920.0)
 _CELL_BOUNDS = (1080.0, 960.0)
 
 
-def _lsa_scene() -> tuple[list[dict], dict[int, dict]]:
-    specs = []
+def _clone_names(label: str) -> tuple[str, str, str]:
+    return f"Cam {label} - plain", f"Cam {label} - Split ↑", f"Cam {label} - Split ↓"
+
+
+def _lsa_scene() -> list[dict]:
+    items = []
     next_id = 1
-    for uuid in _CAM_UUIDS:
-        specs.append((uuid, next_id, _FULL_BOUNDS, 0.0))
-        specs.append((uuid, next_id + 1, _CELL_BOUNDS, 0.0))
-        specs.append((uuid, next_id + 2, _CELL_BOUNDS, 960.0))
-        next_id += 3
-    items = [{"sceneItemId": item_id, "sourceUuid": uuid} for uuid, item_id, _, _ in specs]
-    transforms = {
-        item_id: {"boundsWidth": w, "boundsHeight": h, "positionY": y} for _, item_id, (w, h), y in specs
-    }
-    return items, transforms
+    for label in _CAM_LABELS:
+        for name in _clone_names(label):
+            items.append({"sceneItemId": next_id, "sourceName": name})
+            next_id += 1
+    return items
 
 
-def _lsa_topo(source_uuid: str) -> Topology:
+def _lsa_topo(label: str) -> Topology:
+    full_name, top_name, bottom_name = _clone_names(label)
     return Topology(
-        name=source_uuid,
+        name=label,
         ref={"sceneUuid": "vertical-scene-uuid"},
-        image_source_name=f"--- CAM {source_uuid}",
-        image_source_uuid=source_uuid,
-        source_uuid=source_uuid,
+        image_source_name=f"--- CAM {label}",
+        image_source_uuid=f"uuid-{label}",
+        source_uuid=f"uuid-{label}",
         full_bounds=_FULL_BOUNDS,
         cell_bounds=_CELL_BOUNDS,
         control_w=None,
+        full_name=full_name,
+        cell_top_name=top_name,
+        cell_bottom_name=bottom_name,
     )
 
 
-def test_select_camera_items_filters_by_source_uuid_only():
-    # The silent, new-in-this-change failure mode: without uuid filtering,
-    # cropping a neighboring camera's tile would raise nothing.
-    items, transforms = _lsa_scene()
+def test_select_camera_items_filters_by_clone_name_only():
+    # The silent, new-in-this-change failure mode: without exact-name
+    # filtering, cropping a neighboring camera's tile would raise nothing.
+    items = _lsa_scene()
 
-    control_id, full_id, cell_top_id, cell_bottom_id = select_camera_items(items, transforms, _lsa_topo("uuid-cour"))
+    control_id, full_id, cell_top_id, cell_bottom_id = select_camera_items(items, {}, _lsa_topo("Cour"))
 
     assert (control_id, full_id, cell_top_id, cell_bottom_id) == (None, 4, 5, 6)
 
 
-def test_select_camera_items_orders_cells_by_position_y():
-    items, transforms = _lsa_scene()
+def test_select_camera_items_maps_split_roles_by_name_not_position():
+    # Roles come from the clone name alone now, not from a positionY sort:
+    # transforms is empty here and the mapping still lands on the right ids.
+    items = _lsa_scene()
 
-    _, _, cell_top_id, cell_bottom_id = select_camera_items(items, transforms, _lsa_topo("uuid-jardin"))
+    _, _, cell_top_id, cell_bottom_id = select_camera_items(items, {}, _lsa_topo("Jardin"))
 
     assert (cell_top_id, cell_bottom_id) == (8, 9)
-    assert transforms[cell_top_id]["positionY"] < transforms[cell_bottom_id]["positionY"]
 
 
 def test_select_camera_items_raises_on_incomplete_camera():
-    items, transforms = _lsa_scene()
-    items = [i for i in items if not (i["sourceUuid"] == "uuid-main" and i["sceneItemId"] == 3)]
+    items = _lsa_scene()
+    items = [i for i in items if i["sourceName"] != "Cam Main - Split ↓"]
 
     with pytest.raises(SceneNotReady):
-        select_camera_items(items, transforms, _lsa_topo("uuid-main"))
+        select_camera_items(items, {}, _lsa_topo("Main"))
 
 
 def test_apply_fns_requests_carry_scene_uuid_and_no_scene_name():

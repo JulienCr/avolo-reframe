@@ -41,6 +41,9 @@ def build_topologies() -> dict[str, Topology]:
             full_bounds=(VERTICAL_W, VERTICAL_H),
             cell_bounds=(VERTICAL_W, CELL_H),
             control_w=None,
+            full_name=cam.clone_plain_name,
+            cell_top_name=cam.clone_split_top_name,
+            cell_bottom_name=cam.clone_split_bottom_name,
         )
         for key, cam in CAMERAS.items()
     }
@@ -76,7 +79,7 @@ def main() -> None:
         try:
             resolved = {}
             for key, topo in build_topologies().items():
-                topo, _control_id, full_id, cell_top_id, cell_bottom_id = find_scene_items(obs, topo)
+                topo, _control_id, full_id, cell_top_id, cell_bottom_id, _item_uuids = find_scene_items(obs, topo)
                 resolved[key] = (topo, full_id, cell_top_id, cell_bottom_id)
         except (SceneNotReady, ObsWsError) as exc:
             print(f"Impossible de résoudre les items caméra : {exc}")

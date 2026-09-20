@@ -23,11 +23,43 @@ production, faite dans l'interface d'OBS. La production n'a jamais été ouverte
 Les quatre caméras sont `--- CAM Main`, `--- CAM Main Zoom`, `--- CAM Cour` et
 `--- CAM Jardin`. Main Zoom est un quatrième pipeline sur la même caméra physique
 que Main, avec son propre punch-in : il a ses propres items pour que le vertical
-montre ce que le 16:9 montre. Chaque item a pour source la **scène de sortie** de
-sa caméra, pas l'input. Le recadrage hérite donc du
+montre ce que le 16:9 montre. Chaque item a pour source un `source-clone` de la
+**scène de sortie** de sa caméra, jamais l'input directement (voir « Nomenclature
+des clones » ci-dessous). Le recadrage hérite donc du
 punch-in déjà posé en régie (Jardin 1,30×, Cour 1,34×), des variantes 70s/NB et
 du miroir de `cam-jardin-comp`. Et l'image détectée est exactement l'image
 recadrée.
+
+## Nomenclature des clones
+
+Chaque item d'une scène s'affiche dans OBS sous le nom de sa **source**, jamais celui
+de l'item : `SetSceneItemName` n'existe pas parmi les 151 requêtes de cette instance,
+vérifié en le cherchant plutôt qu'en le supposant. Avec un item sourcé directement sur
+la scène caméra, les douze items de `Vertical Scene` s'affichaient donc sous quatre
+noms seulement (`--- CAM Main` ×4, etc.), indistincts pour l'opérateur.
+
+`scripts/setup_lsa.py` source désormais chacun des douze items sur son propre
+`source-clone` — l'idiome déjà employé pour les variantes 70s/NB et les
+`SPLIT CAM *` de cette collection — un par (caméra × rôle) :
+
+```
+Cam Main - plain          Cam Main - Split ↑          Cam Main - Split ↓
+Cam Main Zoom - plain     Cam Main Zoom - Split ↑     Cam Main Zoom - Split ↓
+Cam Cour - plain          Cam Cour - Split ↑          Cam Cour - Split ↓
+Cam Jardin - plain        Cam Jardin - Split ↑        Cam Jardin - Split ↓
+```
+
+`scripts/run.py` sélectionne chaque rôle par ce nom exact plutôt que par `sourceUuid`
+plus signature de `bounds` : chaque rôle ayant désormais sa propre source, l'ambiguïté
+que la signature de `bounds` existait pour lever a disparu par construction.
+
+**Réserve assumée.** Un `source-clone` désigne sa cible par **nom**, dans son réglage
+`clone`. Renommer `--- CAM Jardin` dans OBS casserait donc les trois clones de Jardin
+**en silence** : ils continueraient d'exister et d'afficher leur dernière image reçue,
+sans qu'aucune requête n'échoue nulle part. Le validateur d'`obs-manager` ne l'attrape
+pas non plus, puisque le nom du clone lui-même ne change pas. C'est le prix de cette
+option : contre des noms lisibles à l'écran, la robustesse au renommage que l'ancien
+schéma tenait de l'adressage par `sourceUuid` est perdue sur la scène caméra elle-même.
 
 ## Comment lancer
 

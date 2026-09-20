@@ -54,9 +54,10 @@ class Topology:
     Resolved once at startup and replaced (dataclasses.replace, never
     mutated) whenever a rebuild changes an id or the discovered source_uuid.
     The PoC and each LSA camera are two shapes of the same fields: control_w
-    is None outside the PoC (no control item to size from); image_source_uuid
-    is None for the PoC (RF Cam's uuid isn't known ahead of a rebuild, and is
-    rediscovered by name on every resolve).
+    is None outside the PoC; image_source_uuid is None for the PoC (RF Cam's
+    uuid is rediscovered by name on every resolve). full_name/cell_top_name/
+    cell_bottom_name are set only for LSA, one uniquely named source-clone
+    per role there instead of the PoC's shared sourceUuid plus bounds.
     """
 
     name: str
@@ -67,6 +68,9 @@ class Topology:
     full_bounds: tuple[float, float]
     cell_bounds: tuple[float, float]
     control_w: float | None
+    full_name: str | None = None
+    cell_top_name: str | None = None
+    cell_bottom_name: str | None = None
 
 
 DEFAULT_CONFIG_PATH = Path("reframe.toml")
@@ -298,7 +302,34 @@ def select_camera_items(
     """Pick one camera's item ids out of a (possibly multi-camera) scene.
 
     Returns (control_id or None, full_id, cell_top_id, cell_bottom_id).
-    Filters by sourceUuid only, never sourceName: a "--- CAM X" scene name is
+    LSA (topo.full_name set): each role is its own uniquely named
+    source-clone, matched by sourceName alone. PoC (topo.full_name is
+    None): one shared sourceUuid across four items, disambiguated by bounds.
+    """
+    if topo.full_name is not None:
+        return _select_by_clone_name(items, topo)
+    return _select_by_uuid_and_bounds(items, transforms, topo)
+
+
+def _select_by_clone_name(items: list[dict], topo: Topology) -> tuple[int | None, int, int, int]:
+    """Each role names its own clone, so one exact sourceName match settles it."""
+
+    def one(name: str) -> int:
+        matches = [i["sceneItemId"] for i in items if i.get("sourceName") == name]
+        if len(matches) != 1:
+            raise SceneNotReady(
+                f"Caméra « {topo.name} » : {len(matches)} item(s) nommé(s) « {name} » (1 attendu). "
+                "Relancez setup_lsa --force."
+            )
+        return matches[0]
+
+    return None, one(topo.full_name), one(topo.cell_top_name), one(topo.cell_bottom_name)
+
+
+def _select_by_uuid_and_bounds(
+    items: list[dict], transforms: dict[int, dict], topo: Topology
+) -> tuple[int | None, int, int, int]:
+    """Filters by sourceUuid only, never sourceName: a "--- CAM X" scene name is
     list-ordering decoration, free to be renamed, while sourceUuid is not.
     Then by bounds signature; cells are ordered by positionY, smallest first.
     """
@@ -324,12 +355,22 @@ def select_camera_items(
     return control_id, full_ids[0], cell_top_id, cell_bottom_id
 
 
-def find_scene_items(obs: ObsWs, topo: Topology) -> tuple[Topology, int | None, int, int, int]:
+def capture_item_uuids(items: list[dict], ids: tuple[int | None, ...]) -> dict[int, str]:
+    """sceneItemId -> current sourceUuid, for the given ids (None entries skipped).
+
+    Fed back into scene_items_match on the next check, to catch an id being
+    silently reused for a different source after a rebuild.
+    """
+    by_id = {i["sceneItemId"]: i["sourceUuid"] for i in items}
+    return {item_id: by_id[item_id] for item_id in ids if item_id is not None}
+
+
+def find_scene_items(obs: ObsWs, topo: Topology) -> tuple[Topology, int | None, int, int, int, dict[int, str]]:
     """Resolve topo.source_uuid (rediscovered by name when not known ahead of
     time) then pick this camera's item ids.
 
-    Returns (topo, control_id or None, full_id, cell_top_id, cell_bottom_id);
-    the returned topo carries the resolved source_uuid.
+    Returns (topo, control_id or None, full_id, cell_top_id, cell_bottom_id,
+    item_uuids); the returned topo carries the resolved source_uuid.
     """
     items = obs.request("GetSceneItemList", topo.ref)["sceneItems"]
     source_uuid = topo.image_source_uuid or discover_source_uuid(items, topo.image_source_name)
@@ -342,7 +383,8 @@ def find_scene_items(obs: ObsWs, topo: Topology) -> tuple[Topology, int | None, 
         if i.get("sourceUuid") == source_uuid
     }
     control_id, full_id, cell_top_id, cell_bottom_id = select_camera_items(items, transforms, topo)
-    return topo, control_id, full_id, cell_top_id, cell_bottom_id
+    item_uuids = capture_item_uuids(items, (control_id, full_id, cell_top_id, cell_bottom_id))
+    return topo, control_id, full_id, cell_top_id, cell_bottom_id, item_uuids
 
 
 def source_size(obs: ObsWs, ref: SceneRef, item_id: int) -> tuple[int, int]:
@@ -376,13 +418,14 @@ def should_wait_for_first_frame(
 
 def resolve_scene(
     obs: ObsWs, topo: Topology, current_size: tuple[int, int] | None = None
-) -> tuple[Topology, int | None, int, int, int, int, int]:
-    """(topo, control_id or None, full_id, cell_top_id, cell_bottom_id, source_w, source_h).
+) -> tuple[Topology, int | None, int, int, int, int, int, dict[int, str]]:
+    """(topo, control_id or None, full_id, cell_top_id, cell_bottom_id, source_w,
+    source_h, item_uuids).
 
     A scene rebuilt moments ago may not have renegotiated a resolution yet:
     poll briefly rather than handing back 0x0, which a caller later divides by.
     """
-    topo, control_id, full_id, cell_top_id, cell_bottom_id = find_scene_items(obs, topo)
+    topo, control_id, full_id, cell_top_id, cell_bottom_id, item_uuids = find_scene_items(obs, topo)
     size_id = control_id if control_id is not None else full_id
     deadline = time.perf_counter() + SCENE_RESOLUTION_TIMEOUT_S
     source_w, source_h = source_size(obs, topo.ref, size_id)
@@ -399,27 +442,26 @@ def resolve_scene(
             time.sleep(SCENE_RESOLUTION_POLL_S)
             source_w, source_h = source_size(obs, topo.ref, size_id)
 
-    return topo, control_id, full_id, cell_top_id, cell_bottom_id, source_w, source_h
+    return topo, control_id, full_id, cell_top_id, cell_bottom_id, source_w, source_h, item_uuids
 
 
-def cam_items_match(items: list[dict], ids: tuple[int, ...], source_uuid: str) -> bool:
-    """Pure: True when every id in ids names an item carrying source_uuid, in a
-    GetSceneItemList-shaped list.
+def cam_items_match(items: list[dict], expected: dict[int, str]) -> bool:
+    """Pure: True when every id in expected still carries its captured sourceUuid.
 
-    A rebuild can reuse the same numeric ids: sourceUuid is what actually
-    changes, which id alone hides. Never checks sourceName -- a camera scene
-    like "--- CAM Main" can be renamed without notice, unlike its uuid.
+    A rebuild can reuse the same numeric ids under a different source (the
+    PoC's fixed CAM_NAME, or an LSA clone recreated by setup_lsa --force):
+    sourceUuid is what actually changes, which id alone hides.
     """
     by_id = {i["sceneItemId"]: i for i in items}
     return all(
-        (item := by_id.get(item_id)) is not None and item.get("sourceUuid") == source_uuid
-        for item_id in ids
+        (item := by_id.get(item_id)) is not None and item.get("sourceUuid") == uuid
+        for item_id, uuid in expected.items()
     )
 
 
-def scene_items_match(obs: ObsWs, ref: SceneRef, ids: tuple[int, ...], source_uuid: str) -> bool:
+def scene_items_match(obs: ObsWs, ref: SceneRef, expected: dict[int, str]) -> bool:
     items = obs.request("GetSceneItemList", ref)["sceneItems"]
-    return cam_items_match(items, ids, source_uuid)
+    return cam_items_match(items, expected)
 
 
 def report_scene_retry(name: str, exc: Exception, last_error: str | None, next_log_at: float) -> tuple[str, float]:
@@ -675,6 +717,9 @@ def build_topology(args: argparse.Namespace) -> Topology:
             full_bounds=(VERTICAL_W, VERTICAL_H),
             cell_bounds=(VERTICAL_W, CELL_H),
             control_w=None,
+            full_name=cam.clone_plain_name,
+            cell_top_name=cam.clone_split_top_name,
+            cell_bottom_name=cam.clone_split_bottom_name,
         )
     scene_ref: SceneRef = {"sceneUuid": args.scene_uuid} if args.scene_uuid else {"sceneName": args.scene}
     return Topology(
@@ -703,7 +748,7 @@ def main() -> None:
         obs.connect()
         if args.cam:
             require_scene_collection(obs, COLLECTION_NAME)
-        topo, control_id, output_id, cell_top_id, cell_bottom_id = find_scene_items(obs, topo)
+        topo, control_id, output_id, cell_top_id, cell_bottom_id, item_uuids = find_scene_items(obs, topo)
         size_id = control_id if control_id is not None else output_id
         source_w, source_h = source_size(obs, topo.ref, size_id)
         cam_kind = try_input_kind(obs, topo.image_source_name)
@@ -806,15 +851,14 @@ def main() -> None:
                     # is as cheap as the GetSceneItemList it rides alongside.
                     if args.cam:
                         require_scene_collection(obs, COLLECTION_NAME)
-                    ids = tuple(i for i in (control_id, output_id, cell_top_id, cell_bottom_id) if i is not None)
-                    if not scene_items_match(obs, topo.ref, ids, topo.source_uuid):
+                    if not scene_items_match(obs, topo.ref, item_uuids):
                         # A half-built rebuild (setup_scene creating items over some ms) must
                         # not kill the loop: retry locally, on the shared rate-limited line,
                         # rather than falling through to the "Connexion OBS perdue" handler.
                         try:
                             (
                                 topo, control_id, output_id, cell_top_id, cell_bottom_id,
-                                new_source_w, new_source_h,
+                                new_source_w, new_source_h, item_uuids,
                             ) = resolve_scene(obs, topo, current_size=(source_w, source_h))
                         except (SceneNotReady, ObsWsError) as resolve_exc:
                             last_scene_error, next_scene_error_log = report_scene_retry(
@@ -998,7 +1042,7 @@ def main() -> None:
                 try:
                     (
                         topo, control_id, output_id, cell_top_id, cell_bottom_id,
-                        new_source_w, new_source_h,
+                        new_source_w, new_source_h, item_uuids,
                     ) = resolve_scene(obs, topo, current_size=(source_w, source_h))
                 except (SceneNotReady, ObsWsError) as resolve_exc:
                     # A scene mid-rebuild (setup_scene --force) makes this fail too: keep the
