@@ -6,6 +6,7 @@ models/
 
 # Artefacts de test locaux, non versionnes
 reframe.toml
+reframe.lsa.toml
 tests/fixtures/*.mp4
 tests/corpus/traces/
 

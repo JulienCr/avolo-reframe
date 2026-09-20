@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## État du dépôt
 
-Un PoC macOS qui tourne, un portage Windows qui tourne sur la cible, et quatre
-documents :
+Un PoC macOS qui tourne, un portage Windows qui tourne sur la cible, une mise en
+place sur la collection de production, et cinq documents :
 
 - [`docs/adr/0001-avolo-reframe.md`](docs/adr/0001-avolo-reframe.md) — la décision d'architecture. À lire avant d'écrire quoi que ce soit.
 - [`docs/recadrage-live-references.md`](docs/recadrage-live-references.md) — le dossier de sources (API obs-websocket, état de l'écosystème, chiffres de détection).
 - [`docs/poc-mac-webcam.md`](docs/poc-mac-webcam.md) — **tout ce qui a été mesuré sur le Mac**. À lire avant d'affirmer un chiffre côté Vision.
 - [`docs/poc-windows.md`](docs/poc-windows.md) — **tout ce qui a été mesuré sur la cible**. À lire avant d'affirmer un chiffre côté YOLO/TensorRT ou obs-websocket sur Windows.
+- [`docs/lsa-vertical.md`](docs/lsa-vertical.md) — **le recadrage des trois caméras de prod sur le canevas vertical**. À lire avant d'affirmer un chiffre sur le multi-caméra ou la charge à trois boucles.
 - [`TODO.md`](TODO.md) — ce qui reste, et surtout ce qui est **tranché** : à lire avant de rouvrir un débat.
 - [`tests/corpus/`](tests/corpus/README.md) — le corpus de cas de contrôle : trace de référence, images de l'extrait, outils de mesure. À comparer après tout changement de politique.
 
@@ -32,6 +33,8 @@ make engine            # exporte en moteur TensorRT fp16, lié à ce GPU et à c
 make probe             # go/no-go + latences, sort 0 si tout passe
 make setup             # (re)construit la scène sur la vidéo de test
 make run ARGS="--upper-body"   # la boucle
+make setup-lsa         # construit les 9 items verticaux + DEBUG - REFRAM sur « LSA 2026 WIP »
+make run-main          # une boucle par caméra : run-main / run-cour / run-jardin
 make corpus            # rejeu déterministe hors OBS ; voir tests/corpus/README.md
 make replay            # rejoue TRACE en quelques secondes, sans décodage ni détection
 ```

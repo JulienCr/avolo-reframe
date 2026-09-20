@@ -98,11 +98,12 @@ derrière elle. L'instrument existe désormais ; les mesures, non.
 
 ## Fonctionnalités visées
 
-- [ ] **Écrire la sortie 9:16 sur le vrai canevas vertical** plutôt que dans
-      l'encart du canevas principal. Vérifié possible : `CreateSceneItem` et
-      `SetSceneItemTransform` acceptent le `sceneUuid` seul, et le crop s'y relit
-      à l'identique. Attention, `GetSourceScreenshot` ne trouve une scène d'un
-      canevas non principal que par `sourceUuid`, jamais par `sourceName`.
+- [x] **Écrire la sortie 9:16 sur le vrai canevas vertical** — fait le
+      20 septembre 2026 sur « LSA 2026 WIP », trois caméras de production, neuf
+      items dans `Vertical Scene`. Crop relu depuis un second processus, charge
+      sur le fil de rendu d'OBS mesurée nulle. Détail et réserves dans
+      [`docs/lsa-vertical.md`](docs/lsa-vertical.md). Reste à juger le cadrage
+      lui-même : les caméras diffusaient une mire.
 - [ ] **L'air devant le regard.** Le yaw de la tête est mesuré côté Vision
       (−47° sur un sujet de profil) et **la politique ne s'en sert pas**.
       Décaler le cadre du côté où le sujet regarde est une règle classique de

@@ -19,11 +19,10 @@ _Job = tuple[tuple[Rect, ...], tuple[Rect, ...], float, float, ApplyFn]
 class Animator:
     """Tweens a tuple of rects together at a fixed tick rate.
 
-    One rect for a single crop, two for split's stacked cells: apply_fn
-    turns the interpolated tuple into the OBS request batch for a tick.
-
-    All socket I/O happens on the background thread started by start():
-    play() and jump() only ever touch the job under a lock, so a single
+    One rect for a single crop, two for split's stacked cells. apply_fn
+    carries only what changes every tick; level state such as visibility
+    goes in jump()/play()'s prelude, sent once instead of on every tick.
+    All socket I/O happens on the thread started by start(), so a single
     ObsWs connection is never driven from two threads at once.
     """
 
@@ -37,6 +36,9 @@ class Animator:
         self._thread: threading.Thread | None = None
         self._job: _Job | None = None
         self._current: tuple[Rect, ...] | None = None
+        # Level-state requests (e.g. item visibility) to ride in the same
+        # request_batch as the job's first tick, then never resent.
+        self._prelude: list[tuple[str, dict]] | None = None
 
     def start(self) -> None:
         self._obs.connect()
@@ -54,21 +56,39 @@ class Animator:
         with self._lock:
             return self._job is not None
 
-    def jump(self, to: tuple[Rect, ...], apply_fn: ApplyFn) -> None:
-        """Queue an instant cut: applied whole on the next tick, no tween."""
+    def jump(
+        self, to: tuple[Rect, ...], apply_fn: ApplyFn, prelude: list[tuple[str, dict]] | None = None
+    ) -> None:
+        """Queue an instant cut: applied whole on the next tick, no tween.
+
+        prelude, when given, is sent in the same request_batch as that one
+        tick's apply_fn output -- e.g. a visibility change that must land
+        atomically with the crop of a mode switch, never as two writes an
+        observer could catch between.
+        """
         with self._lock:
             # Set synchronously: a play() issued right after must see `to`,
             # not the rects from before the jump's own tick has run.
             self._current = to
             self._job = (to, to, 0.0, 0.0, apply_fn)
+            self._prelude = prelude
 
-    def play(self, frm: tuple[Rect, ...], to: tuple[Rect, ...], duration_ms: float, apply_fn: ApplyFn) -> None:
+    def play(
+        self,
+        frm: tuple[Rect, ...],
+        to: tuple[Rect, ...],
+        duration_ms: float,
+        apply_fn: ApplyFn,
+        prelude: list[tuple[str, dict]] | None = None,
+    ) -> None:
+        """prelude: see jump() -- sent once, with this job's first tick only."""
         with self._lock:
             current = self._current
             # Supersede from the current rects, not frm, so motion stays
             # smooth — unless the shape just changed (single vs split).
             start_from = current if current is not None and len(current) == len(to) else frm
             self._job = (start_from, to, time.perf_counter(), max(duration_ms, 1.0), apply_fn)
+            self._prelude = prelude
 
     def _run(self) -> None:
         next_tick = time.perf_counter()
@@ -98,10 +118,14 @@ class Animator:
             self._current = rects
             if t >= 1.0 and self._job is job:
                 self._job = None
-        self._send(rects, apply_fn)
+            prelude = self._prelude
+            self._prelude = None
+        self._send(rects, apply_fn, prelude)
 
-    def _send(self, rects: tuple[Rect, ...], apply_fn: ApplyFn) -> None:
-        requests = apply_fn(rects)
+    def _send(
+        self, rects: tuple[Rect, ...], apply_fn: ApplyFn, prelude: list[tuple[str, dict]] | None = None
+    ) -> None:
+        requests = (prelude or []) + apply_fn(rects)
         try:
             self._obs.ensure_connected()
             self._obs.request_batch(requests, execution_type="SERIAL_REALTIME")

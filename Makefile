@@ -14,7 +14,7 @@ ARGS    ?=
 export YOLO_AUTOINSTALL := false
 
 .DEFAULT_GOAL := help
-.PHONY: help sync check test model engine bench probe setup setup-camera run corpus replay
+.PHONY: help sync check test model engine bench probe setup setup-camera setup-lsa run run-lsa run-main run-cour run-jardin run-mainzoom director corpus replay
 
 # $(info) is printed by make itself, so no shell quoting rules apply.
 help:
@@ -28,7 +28,14 @@ help:
 	$(info   make probe         go/no-go OBS et latences, sort 0 si tout passe)
 	$(info   make setup         (re)construit la scène sur la vidéo de test)
 	$(info   make setup-camera  (re)construit la scène sur la caméra (AvoCam si avocam_ip est configuré))
+	$(info   make setup-lsa     (re)construit la scène verticale LSA 2026 (4 caméras + scène debug))
 	$(info   make run           la boucle de recadrage)
+	$(info   make run-lsa       les quatre boucles LSA + le chef de pupitre, en régie : la commande normale)
+	$(info   make run-main      la boucle sur la caméra main, pour déboguer cette caméra seule)
+	$(info   make run-cour      la boucle sur la caméra cour, pour déboguer cette caméra seule)
+	$(info   make run-jardin    la boucle sur la caméra jardin, pour déboguer cette caméra seule)
+	$(info   make run-mainzoom  la boucle sur la caméra main zoom, pour déboguer cette caméra seule)
+	$(info   make director      le chef de pupitre seul : bascule le vertical sur la scène de programme)
 	$(info   make corpus        rejeu déterministe hors OBS : CLIP vers TRACE et SUMMARY)
 	$(info   make replay        rejoue TRACE (--from-trace) vers REPLAY et REPLAY_SUMMARY, sans décoder ni détecter)
 	$(info )
@@ -63,8 +70,29 @@ setup:
 setup-camera:
 	uv run python -m scripts.setup_scene --force --camera $(ARGS)
 
+setup-lsa:
+	uv run python -m scripts.setup_lsa --config reframe.lsa.toml $(ARGS)
+
 run:
 	uv run python -m scripts.run $(ARGS)
+
+run-lsa:
+	uv run python -m scripts.run_lsa $(ARGS)
+
+run-main:
+	uv run python -m scripts.run --cam main --config reframe.lsa.toml $(ARGS)
+
+run-cour:
+	uv run python -m scripts.run --cam cour --config reframe.lsa.toml $(ARGS)
+
+run-jardin:
+	uv run python -m scripts.run --cam jardin --config reframe.lsa.toml $(ARGS)
+
+run-mainzoom:
+	uv run python -m scripts.run --cam mainzoom --config reframe.lsa.toml $(ARGS)
+
+director:
+	uv run python -m scripts.director --config reframe.lsa.toml $(ARGS)
 
 corpus:
 	uv run python -m scripts.corpus $(CLIP) --fps $(FPS) --out $(TRACE) --summary-json $(SUMMARY) $(ARGS)
